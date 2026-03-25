@@ -93,6 +93,9 @@ fallback_prompt() {
 
 command -v jq &>/dev/null || fallback_prompt "─ │ jq not found"
 
+STATUSLINE_TMPDIR="${TMPDIR:-/tmp}"
+STATUSLINE_TMPDIR="${STATUSLINE_TMPDIR%/}"
+
 # ═══════════════════════════════════════════════════════════════
 # Read JSON (single jq pass)
 # ═══════════════════════════════════════════════════════════════
@@ -101,6 +104,7 @@ input=$(cat)
 
 parsed=$(echo "$input" | jq -r '
   (.model.display_name // ""),
+  (.session_id // ""),
   (.context_window.used_percentage // 0 | tostring),
   (.cost.total_cost_usd // 0 | (. * 100 | round) / 100 | tostring),
   (.workspace.current_dir // "." | split("/") | last),
@@ -121,6 +125,7 @@ parsed=$(echo "$input" | jq -r '
 
 {
   IFS= read -r model_name
+  IFS= read -r session_id
   IFS= read -r ctx_pct
   IFS= read -r cost
   IFS= read -r dir
@@ -146,32 +151,53 @@ parsed=$(echo "$input" | jq -r '
 model="${model_name:-─}"
 
 # ═══════════════════════════════════════════════════════════════
-# Context progress bar
+# Boot cost snapshot
 # ═══════════════════════════════════════════════════════════════
+
+BOOT_CACHE="${STATUSLINE_TMPDIR}/claude-statusline-boot-${session_id:-default}"
 
 pct_int=${ctx_pct%.*}
 pct_int=${pct_int:-0}
 if (( pct_int < 0 )); then pct_int=0; fi
 if (( pct_int > 100 )); then pct_int=100; fi
 
+boot_pct=0
+if [[ ! -f "$BOOT_CACHE" ]]; then
+  echo "$pct_int" > "$BOOT_CACHE"
+  boot_pct=$pct_int
+else
+  boot_pct=$(cat "$BOOT_CACHE" 2>/dev/null)
+  boot_pct=${boot_pct:-0}
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# Context progress bar (boot zone + chat zone)
+# ═══════════════════════════════════════════════════════════════
+
 bar_filled=$(( pct_int / 10 ))
 if (( bar_filled > 10 )); then bar_filled=10; fi
+
+boot_filled=$(( boot_pct / 10 ))
+if (( boot_filled > 10 )); then boot_filled=10; fi
 
 # Gradient colors (truecolor): green → yellow → orange → red
 GRAD_R=(46 116 186 241 239 236 233 231 211 192)
 GRAD_G=(204 195 186 196 161 126 101 76 66 57)
 GRAD_B=(113 89 64 15 24 34 44 60 50 43)
 
+# Bar has three zones: boot (dark, solid) → chat (gradient) → empty (dim)
 bar=""
 if [[ "$USE_ASCII" == "1" ]]; then
-  # ASCII mode
   for (( i=0; i<10; i++ )); do
-    if (( i < bar_filled )); then bar+="#"; else bar+="-"; fi
+    if (( i < boot_filled )); then bar+="="
+    elif (( i < bar_filled )); then bar+="#"
+    else bar+="-"; fi
   done
 elif (( USE_TRUECOLOR )); then
-  # Truecolor gradient: color each cell independently
   for (( i=0; i<10; i++ )); do
-    if (( i < bar_filled )); then
+    if (( i < boot_filled )); then
+      bar+="\\033[38;2;80;80;80m█"
+    elif (( i < bar_filled )); then
       bar+="\\033[38;2;${GRAD_R[$i]};${GRAD_G[$i]};${GRAD_B[$i]}m█"
     else
       bar+="\\033[38;2;60;60;60m░"
@@ -185,9 +211,16 @@ else
   else bar_color="$GREEN"; fi
 
   for (( i=0; i<10; i++ )); do
-    if (( i < bar_filled )); then bar+="█"; else bar+="░"; fi
+    if (( i < boot_filled )); then bar+="${GRAY}█${RST}"
+    elif (( i < bar_filled )); then bar+="${bar_color}█${RST}"
+    else bar+="░"; fi
   done
-  bar="${bar_color}${bar}${RST}"
+fi
+
+# Boot label: small persistent reminder of the startup cost
+boot_label=""
+if (( boot_pct > 0 )); then
+  boot_label=" ${GRAY}(boot ${boot_pct}%)${RST}"
 fi
 
 # Percentage text color (matches the bar's overall color)
@@ -243,7 +276,7 @@ fi
 # Git branch and dirty marker (cached)
 # ═══════════════════════════════════════════════════════════════
 
-GIT_CACHE="/tmp/claude-statusline-git-cache"
+GIT_CACHE="${STATUSLINE_TMPDIR}/claude-statusline-git-cache"
 GIT_CACHE_MAX_AGE=5
 
 git_branch="${branch:-}"
@@ -432,7 +465,7 @@ else prompt_color="$GREEN"; fi
 # ═══════════════════════════════════════════════════════════════
 
 line1="${PURPLE}${S_BRAND}${RST} ${CYAN}${model}${RST}"
-line1+="${SEP}${bar} ${pct_color}${pct_int}%${RST}${ctx_warn}${ctx_label}"
+line1+="${SEP}${bar} ${pct_color}${pct_int}%${RST}${boot_label}${ctx_warn}${ctx_label}"
 line1+="${SEP}${cost_color}${S_COST}${cost_str}${RST}"
 line1+="${dur_section}"
 line1+="${rate_section}"
