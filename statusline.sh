@@ -231,8 +231,7 @@ else
 fi
 
 # Boot label: startup-cost percentage shown to the left of the bar,
-# omitted when it rounds to 0%. Color escalates with how much of the
-# context budget startup config ate: 1-5% grey, 6-10% yellow, 11%+ red.
+# omitted when it rounds to 0%.
 boot_label=""
 if (( boot_pct > 0 )); then
   if (( boot_pct > 10 )); then boot_color="$RED"
@@ -300,11 +299,20 @@ GIT_CACHE_MAX_AGE=5
 git_branch="${branch:-}"
 dirty=""
 
+file_mtime() {
+  local file="$1" mtime=""
+  if mtime=$(stat -c %Y "$file" 2>/dev/null) && [[ "$mtime" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$mtime"
+  elif mtime=$(stat -f %m "$file" 2>/dev/null) && [[ "$mtime" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$mtime"
+  else
+    printf '0\n'
+  fi
+}
+
 git_cache_is_stale() {
   [[ ! -f "$GIT_CACHE" ]] && return 0
-  local mtime
-  mtime=$(stat -c %Y "$GIT_CACHE" 2>/dev/null || stat -f %m "$GIT_CACHE" 2>/dev/null || echo 0)
-  local cache_age=$(( $(date +%s) - mtime ))
+  local cache_age=$(( $(date +%s) - $(file_mtime "$GIT_CACHE") ))
   (( cache_age > GIT_CACHE_MAX_AGE ))
 }
 
@@ -398,8 +406,6 @@ remaining_pct_color() {
   else echo "$GREEN"; fi
 }
 
-# Warning symbol for near-exhausted capacity, same red cutoff and glyph
-# as the context bar's own warning (ctx_warn).
 rate_warn() {
   local pct=$1
   if (( pct <= 10 )); then echo "${RED}${S_WARN}${RST}"; fi
