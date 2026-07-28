@@ -191,9 +191,11 @@ fi
 
 bar_filled=$(( pct_int / 10 ))
 if (( bar_filled > 10 )); then bar_filled=10; fi
+if (( pct_int > 0 && bar_filled == 0 )); then bar_filled=1; fi
 
 boot_filled=$(( boot_pct / 10 ))
 if (( boot_filled > 10 )); then boot_filled=10; fi
+if (( boot_pct > 0 && boot_filled == 0 )); then boot_filled=1; fi
 
 # Bar has three zones: boot (dark, solid) → chat (gradient) → empty (dim)
 bar=""
@@ -416,6 +418,7 @@ draw_remaining_bar() {
   local filled=$(( pct / 10 ))
   if (( filled > 10 )); then filled=10; fi
   if (( filled < 0 )); then filled=0; fi
+  if (( pct > 0 && filled == 0 )); then filled=1; fi
   local b=""
   if [[ "$USE_ASCII" == "1" ]]; then
     for (( i=0; i<10; i++ )); do
