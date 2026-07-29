@@ -114,12 +114,7 @@ trap 'fallback_prompt "─"' ERR
 
 # Integer part of a value. Anything non-numeric (null, stray command
 # output) becomes 0, so it can never blow up an arithmetic context and
-# abort the script under set -u. Truncates like the rest of the script
-# (not round), so existing thresholds (e.g. pct_int >= 90) don't shift.
-# Scientific notation (jq renders tiny numbers as e.g. 1.2e-05) needs a
-# real conversion first — naively truncating at the literal '.' would
-# keep just the mantissa's integer part and silently return the wrong
-# value instead of 0.
+# abort the script under `set -u`.
 to_int() { # $1=raw value  $2=target variable name
   local raw="$1" v
   if [[ "$raw" == *[eE]* ]]; then
@@ -316,8 +311,11 @@ fi
 # Git branch and dirty marker (cached)
 # ═══════════════════════════════════════════════════════════════
 
-GIT_CACHE="${STATUSLINE_TMPDIR}/claude-statusline-git-cache"
 GIT_CACHE_MAX_AGE=5
+
+GIT_CACHE_DIR="${STATUSLINE_TMPDIR}/claude-statusline-git-${UID:-0}"
+mkdir -p "$GIT_CACHE_DIR" 2>/dev/null || true
+GIT_CACHE="$GIT_CACHE_DIR/$(cksum <<< "${cwd_full:-.}" | cut -d' ' -f1)"
 
 git_branch="${branch:-}"
 dirty=""
@@ -354,14 +352,14 @@ if [[ -n "${cwd_full:-}" && -d "${cwd_full:-}" ]]; then
          ! git -C "$cwd_full" -c core.useBuiltinFSMonitor=false diff --cached --quiet 2>/dev/null; then
         cached_dirty="*"
       fi
-      echo "${cached_branch}|${cached_dirty}" > "$GIT_CACHE"
+      echo "${cached_branch}|${cached_dirty}" > "$GIT_CACHE" 2>/dev/null || true
     else
-      echo "|" > "$GIT_CACHE"
+      echo "|" > "$GIT_CACHE" 2>/dev/null || true
     fi
   fi
 
   if [[ -f "$GIT_CACHE" ]]; then
-    IFS='|' read -r cached_br cached_dt < "$GIT_CACHE"
+    IFS='|' read -r cached_br cached_dt < "$GIT_CACHE" || true
     if [[ -z "$git_branch" ]]; then git_branch="${cached_br}"; fi
     dirty="${cached_dt}"
   fi
