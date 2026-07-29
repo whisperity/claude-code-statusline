@@ -75,26 +75,36 @@ if [[ "$USE_ASCII" == "1" ]]; then
   SEP=" | "
 elif [[ "$USE_NERDFONT" == "1" ]]; then
   S_BRAND="◆"
-  S_BRANCH=" "
+  S_BRANCH=$' '
   S_WARN=" 󰀦"
   S_PROMPT="❯"
   S_TIME="󰔟 "
   S_COST=" "
   if [[ "$USE_POWERLINE" == "1" ]]; then
-    SEP="  "
+    SEP=$'  '
   else
     SEP=" │ "
   fi
 else
   S_BRAND="◆"
-  S_BRANCH="⎇"
   S_WARN=" ⚠"
   S_PROMPT="❯"
   S_TIME=""
   S_COST=""
   if [[ "$USE_POWERLINE" == "1" ]]; then
+    # U+E0A0 is a Powerline glyph, so it is available whenever Powerline
+    # separators are. It is monospace, so it occupies exactly one cell.
+    S_BRANCH=$' '
     SEP="  "
   else
+    # U+2387 is absent from common monospace fonts (Hack, Noto Sans Mono,
+    # DejaVu Sans Mono), so fontconfig falls back to a proportional face.
+    # Its East_Asian_Width is Neutral, so the terminal reserves a single
+    # cell, but the proportional glyph is drawn wider than that and
+    # bleeds into the next cell -- which held the first letter of the
+    # branch name, since this was the only tier without a trailing
+    # space. The space absorbs the overflow.
+    S_BRANCH="⎇ "
     SEP=" │ "
   fi
 fi
@@ -311,11 +321,10 @@ fi
 # Git branch and dirty marker (cached)
 # ═══════════════════════════════════════════════════════════════
 
-GIT_CACHE_MAX_AGE=5
-
 GIT_CACHE_DIR="${STATUSLINE_TMPDIR}/claude-statusline-git-${UID:-0}"
 mkdir -p "$GIT_CACHE_DIR" 2>/dev/null || true
 GIT_CACHE="$GIT_CACHE_DIR/$(cksum <<< "${cwd_full:-.}" | cut -d' ' -f1)"
+GIT_CACHE_MAX_AGE=5
 
 git_branch="${branch:-}"
 dirty=""
@@ -380,6 +389,9 @@ fi
 # Rate limits (shown conditionally, as remaining capacity)
 # ═══════════════════════════════════════════════════════════════
 
+FIVE_HOUR_WINDOW_MIN=$(( 5 * 60 ))
+SEVEN_DAY_WINDOW_MIN=$(( 7 * 24 * 60 ))
+
 reset_minutes() {
   local resets_at="$1" now="$2"
   if [[ -z "$resets_at" || "$resets_at" == "-1" ]]; then
@@ -417,9 +429,6 @@ time_left_color() {
   elif (( frac_pct > 16 )); then echo "$YELLOW"
   else echo "$GREEN"; fi
 }
-
-FIVE_HOUR_WINDOW_MIN=$(( 5 * 60 ))
-SEVEN_DAY_WINDOW_MIN=$(( 7 * 24 * 60 ))
 
 remaining_pct_color() {
   local pct=$1
