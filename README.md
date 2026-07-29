@@ -43,6 +43,7 @@ Turn the blank status bar into a real-time dashboard: model, context usage with 
 | **Nerd Font support** | Optional: ``, `󰔟`, `` icons. Set `CLAUDE_STATUSLINE_NERDFONT=1`. |
 | **Powerline separators** | Optional: `` arrows. Set `CLAUDE_STATUSLINE_POWERLINE=1`. |
 | **< 50ms** | Single `jq` call + cached git. No perceptible lag. |
+| **Crash-proof** | A global `ERR` trap and numeric-coercion on every JSON value flowing into arithmetic mean an unexpected failure falls back to a visible `─` instead of Claude Code rendering no status line at all. |
 
 ## Installation
 

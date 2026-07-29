@@ -108,6 +108,30 @@ fallback_prompt() {
   exit 0
 }
 
+# An unexpected failure must never leave the status line blank, because
+# empty output makes Claude Code render nothing at all.
+trap 'fallback_prompt "─"' ERR
+
+# Integer part of a value. Anything non-numeric (null, stray command
+# output) becomes 0, so it can never blow up an arithmetic context and
+# abort the script under set -u. Truncates like the rest of the script
+# (not round), so existing thresholds (e.g. pct_int >= 90) don't shift.
+# Scientific notation (jq renders tiny numbers as e.g. 1.2e-05) needs a
+# real conversion first — naively truncating at the literal '.' would
+# keep just the mantissa's integer part and silently return the wrong
+# value instead of 0.
+to_int() { # $1=raw value  $2=target variable name
+  local raw="$1" v
+  if [[ "$raw" == *[eE]* ]]; then
+    v=$(LC_ALL=C printf '%.10f' "$raw" 2>/dev/null)
+    v="${v%%.*}"
+  else
+    v="${raw%%.*}"
+  fi
+  [[ "$v" =~ ^-?[0-9]+$ ]] || v=0
+  printf -v "$2" '%s' "$v"
+}
+
 command -v jq &>/dev/null || fallback_prompt "─ │ jq not found"
 
 # ═══════════════════════════════════════════════════════════════
@@ -170,8 +194,7 @@ model="${model_name:-─}"
 
 BOOT_CACHE="${STATUSLINE_TMPDIR}/claude-statusline-boot-${session_id:-default}"
 
-pct_int=${ctx_pct%.*}
-pct_int=${pct_int:-0}
+to_int "${ctx_pct:-0}" pct_int
 if (( pct_int < 0 )); then pct_int=0; fi
 if (( pct_int > 100 )); then pct_int=100; fi
 
@@ -181,8 +204,7 @@ if [[ ! -f "$BOOT_CACHE" ]]; then
   echo "$pct_int" > "$BOOT_CACHE"
   boot_pct=$pct_int
 else
-  boot_pct=$(cat "$BOOT_CACHE" 2>/dev/null)
-  boot_pct=${boot_pct:-0}
+  to_int "$(cat "$BOOT_CACHE" 2>/dev/null)" boot_pct
 fi
 
 # ═══════════════════════════════════════════════════════════════
@@ -252,7 +274,7 @@ ctx_warn=""
 if (( pct_int >= 90 )); then ctx_warn="${RED}${S_WARN}${RST}"; fi
 
 # Context window size (only shown when model display_name lacks context info)
-ctx_size_int=${ctx_size:-0}
+to_int "${ctx_size:-0}" ctx_size_int
 ctx_label=""
 if [[ "$model" != *context* && "$model" != *Context* ]]; then
   if (( ctx_size_int >= 1000000 )); then ctx_label=" ${GRAY}1M${RST}"
@@ -266,8 +288,7 @@ fi
 
 cost_val="${cost:-0}"
 cost_fmt=$(LC_ALL=C printf '%.2f' "$cost_val" 2>/dev/null || echo "0.00")
-cost_int=${cost_val%.*}
-cost_int=${cost_int:-0}
+to_int "$cost_val" cost_int
 cost_str="\$${cost_fmt}"
 
 if (( cost_int >= 50 )); then cost_color="$RED"
@@ -279,7 +300,7 @@ else cost_color="$GRAY"; fi
 # Elapsed time (smart-hidden when zero)
 # ═══════════════════════════════════════════════════════════════
 
-dur_ms=${duration_ms:-0}
+to_int "${duration_ms:-0}" dur_ms
 dur_section=""
 if (( dur_ms > 0 )); then
   dur_sec=$((dur_ms / 1000))
@@ -350,8 +371,8 @@ fi
 # Lines added/removed (smart-hidden when zero)
 # ═══════════════════════════════════════════════════════════════
 
-lines_add=${lines_add:-0}
-lines_rm=${lines_rm:-0}
+to_int "${lines_add:-0}" lines_add
+to_int "${lines_rm:-0}" lines_rm
 lines_section=""
 if (( lines_add > 0 || lines_rm > 0 )); then
   lines_section="${GREEN}+${lines_add}${RST}/${RED}-${lines_rm}${RST}"
@@ -366,7 +387,8 @@ reset_minutes() {
   if [[ -z "$resets_at" || "$resets_at" == "-1" ]]; then
     return
   fi
-  local resets_at_int=${resets_at%.*}
+  local resets_at_int
+  to_int "$resets_at" resets_at_int
   local delta=$(( resets_at_int - now ))
   if (( delta < 0 )); then delta=0; fi
   echo $(( delta / 60 ))
@@ -446,8 +468,8 @@ draw_remaining_bar() {
 }
 
 rate_section=""
-rate5h_int=${rate5h%.*}; rate5h_int=${rate5h_int:-0}
-rate7d_int=${rate7d%.*}; rate7d_int=${rate7d_int:-0}
+to_int "${rate5h:--1}" rate5h_int
+to_int "${rate7d:--1}" rate7d_int
 now_epoch=$(date +%s)
 
 rate_parts=""
