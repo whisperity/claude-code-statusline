@@ -42,7 +42,8 @@ fi
 
 STATUSLINE_TMPDIR="${TMPDIR:-/tmp}"
 STATUSLINE_TMPDIR="${STATUSLINE_TMPDIR%/}"
-GIT_CACHE_MAX_AGE=5
+CONTEXT_CACHE_MAX_AGE=15 # sec.
+GIT_CACHE_MAX_AGE=15 # sec.
 FIVE_HOUR_GREY_THRESHOLD_MIN=$(( 3 * 60 ))
 SEVEN_DAY_GREY_THRESHOLD_MIN=$(( 72 * 60 ))
 FIVE_HOUR_GREEN_FLOOR_MIN=20
@@ -71,10 +72,10 @@ else
 fi
 
 if (( USE_TRUECOLOR )); then
-  BOOT_ZONE_COLOR='\033[38;2;80;80;80m'
+  CTX_CACHE_ZONE_COLOR='\033[38;2;80;80;80m'
   EMPTY_ZONE_COLOR='\033[38;2;60;60;60m'
 else
-  BOOT_ZONE_COLOR="$BLACK"
+  CTX_CACHE_ZONE_COLOR="$BLACK"
   EMPTY_ZONE_COLOR="$GRAY"
 fi
 
@@ -152,6 +153,21 @@ trap 'fallback_prompt "─ statusline failed on line $LINENO —"' ERR
 
 command -v jq &>/dev/null || fallback_prompt "─ │ jq not found"
 
+# ═══════════════════════════════════════════════════════════════
+# Utility functions
+# ═══════════════════════════════════════════════════════════════
+
+file_mtime() {
+  local file="$1" mtime=""
+  if mtime=$(stat -c %Y "$file" 2>/dev/null) && [[ "$mtime" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$mtime"
+  elif mtime=$(stat -f %m "$file" 2>/dev/null) && [[ "$mtime" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$mtime"
+  else
+    printf '0\n'
+  fi
+}
+
 # Integer part of a value. Anything non-numeric (null, stray command
 # output) becomes 0, so it can never blow up an arithmetic context and
 # abort the script under `set -u`.
@@ -167,16 +183,242 @@ to_int() { # $1=raw value  $2=target variable name
   printf -v "$2" '%s' "$v"
 }
 
-# Character count of a line with its (still-literal, pre-%b) ANSI color
-# codes stripped, i.e. how many terminal columns it actually occupies.
-# Approximate: doesn't account for double-width glyphs (CJK, some
-# emoji), so a line right at the edge of the terminal width may still
-# wrap by a cell or two.
-visible_len() {
-  local stripped
-  stripped=$(printf '%s' "$1" | sed -E 's/\\033\[[0-9;]*m//g')
-  printf '%s' "${#stripped}"
+# ═══════════════════════════════════════════════════════════════
+# Read JSON (single jq pass)
+# ═══════════════════════════════════════════════════════════════
+
+input=$(cat)
+
+parsed=$(echo "$input" | jq -r '
+  (.model.display_name // ""),
+  (.session_id // ""),
+  (.context_window.used_percentage // 0 | tostring),
+  (.cost.total_cost_usd // 0 | (. * 100 | round) / 100 | tostring),
+  (.workspace.current_dir // "." | split("/") | last),
+  (.worktree.branch // ""),
+  (.rate_limits.five_hour.used_percentage // -1 | tostring),
+  (.rate_limits.seven_day.used_percentage // -1 | tostring),
+  (.rate_limits.five_hour.resets_at // -1 | tostring),
+  (.rate_limits.seven_day.resets_at // -1 | tostring),
+  (.agent.name // ""),
+  (.workspace.current_dir // "."),
+  (.cost.total_lines_added // 0 | tostring),
+  (.cost.total_lines_removed // 0 | tostring),
+  (.cost.total_duration_ms // 0 | tostring),
+  (.context_window.context_window_size // 0 | tostring),
+  (.worktree.name // ""),
+  (if .context_window.current_usage == null then "0" else "1" end),
+  "END"
+' 2>/dev/null) || fallback_prompt "─ │ parse error"
+
+{
+  IFS= read -r model_name
+  IFS= read -r session_id
+  IFS= read -r ctx_pct
+  IFS= read -r cost
+  IFS= read -r dir
+  IFS= read -r branch
+  IFS= read -r rate5h
+  IFS= read -r rate7d
+  IFS= read -r reset5h
+  IFS= read -r reset7d
+  IFS= read -r agent_name
+  IFS= read -r cwd_full
+  IFS= read -r lines_add
+  IFS= read -r lines_rm
+  IFS= read -r duration_ms
+  IFS= read -r ctx_size
+  IFS= read -r wt_name
+  IFS= read -r usage_populated
+  IFS= read -r _sentinel
+} <<< "$parsed"
+
+# ═══════════════════════════════════════════════════════════════
+# Model
+# ═══════════════════════════════════════════════════════════════
+
+model="${model_name:-─}"
+
+# ═══════════════════════════════════════════════════════════════
+# Context cache snapshot
+# ═══════════════════════════════════════════════════════════════
+
+CONTEXT_CACHE="${STATUSLINE_TMPDIR}/claude-statusline-context-${session_id:-default}"
+
+to_int "${ctx_pct:-0}" pct_int
+if (( pct_int < 0 )); then pct_int=0; fi
+if (( pct_int > 100 )); then pct_int=100; fi
+
+# Snapshot the pre-chat context cost on first execution, and re-arm it
+# after a "/compact". Two independent signals detect compaction, either
+# is sufficient:
+#
+#   1. Definitive: `context_window.current_usage` is null before the
+#      first API response in the session, and again immediately after
+#      "/compact" until the next API call repopulates it (per Claude
+#      Code docs) — so a 1→0 transition in `usage_populated` means a
+#      compaction happened. Since it's null, the fresh percentage isn't
+#      known yet, so the snapshot is invalidated and left pending until
+#      the next API call repopulates it.
+#   2. Heuristic fallback, in case a compaction is missed by signal 1
+#      (e.g., the statusline didn't run during that exact window):
+#      context usage only grows within a session absent compaction, so
+#      a drop in `pct_int` below the highest value observed so far also
+#      means a compaction happened. Since usage is already populated
+#      here, the fresh percentage is known immediately — no pending step.
+#
+# ctx_cache_state:
+#   0 = pre-first-API-call
+#   1 = pending: awaiting repopulation after a signal-1 (definitive) detection
+#   2 = valid: (re)armed via the initial snapshot or a signal-1 detection
+#   3 = valid: (re)armed via a signal-2 (heuristic) detection
+ctx_cache_pct=0
+ctx_cache_state=0
+ctx_cache_last=0
+
+context_cache_is_stale() {
+  [[ ! -f "$CONTEXT_CACHE" ]] && return 0
+  local cache_age=$(( $(date +%s) - $(file_mtime "$CONTEXT_CACHE") ))
+  (( cache_age > CONTEXT_CACHE_MAX_AGE ))
 }
+
+if [[ ! -f "$CONTEXT_CACHE" ]]; then
+  ctx_cache_pct=$pct_int
+  ctx_cache_last=$pct_int
+  if (( usage_populated == 1 )); then ctx_cache_state=2; fi
+  printf '%s\n%s\n%s\n' "$ctx_cache_pct" "$ctx_cache_state" "$ctx_cache_last" > "$CONTEXT_CACHE"
+else
+  {
+    IFS= read -r ctx_cache_pct
+    IFS= read -r ctx_cache_state
+    IFS= read -r ctx_cache_last
+  } < "$CONTEXT_CACHE"
+  to_int "${ctx_cache_pct:-0}" ctx_cache_pct
+  to_int "${ctx_cache_state:-0}" ctx_cache_state
+  to_int "${ctx_cache_last:-0}" ctx_cache_last
+
+  if (( ( ctx_cache_state == 0 || ctx_cache_state == 1 ) && usage_populated == 1 )); then
+    # Initial snapshot, or repopulation after a signal-1 (definitive)
+    # detection: snapshot now.
+    ctx_cache_pct=$pct_int
+    ctx_cache_state=2
+    ctx_cache_last=$pct_int
+    printf '%s\n%s\n%s\n' "$ctx_cache_pct" "$ctx_cache_state" "$ctx_cache_last" > "$CONTEXT_CACHE"
+  elif (( ( ctx_cache_state == 2 || ctx_cache_state == 3 ) && usage_populated == 0 )); then
+    # Signal 1: definitive compaction. The fresh percentage isn't known
+    # yet — invalidate the snapshot and wait for the next API call.
+    ctx_cache_pct=0
+    ctx_cache_state=1
+    ctx_cache_last=$pct_int
+    printf '%s\n%s\n%s\n' "$ctx_cache_pct" "$ctx_cache_state" "$ctx_cache_last" > "$CONTEXT_CACHE"
+  elif (( ( ctx_cache_state == 2 || ctx_cache_state == 3 ) && pct_int < ctx_cache_last )); then
+    # Signal 2: heuristic compaction. usage is already populated, so the
+    # fresh percentage is known immediately — snapshot right away.
+    ctx_cache_pct=$pct_int
+    ctx_cache_state=3
+    ctx_cache_last=$pct_int
+    printf '%s\n%s\n%s\n' "$ctx_cache_pct" "$ctx_cache_state" "$ctx_cache_last" > "$CONTEXT_CACHE"
+  elif (( ( ctx_cache_state == 2 || ctx_cache_state == 3 ) && pct_int > ctx_cache_last )); then
+    # Steady growth: track the high-water mark for the next comparison.
+    if context_cache_is_stale; then
+      ctx_cache_last=$pct_int
+      printf '%s\n%s\n%s\n' "$ctx_cache_pct" "$ctx_cache_state" "$ctx_cache_last" > "$CONTEXT_CACHE"
+    fi
+  fi
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# Context progress bar (cache zone + chat zone)
+# ═══════════════════════════════════════════════════════════════
+
+ctx_cache_filled=$(( ctx_cache_pct / 10 ))
+if (( ctx_cache_filled > 10 )); then ctx_cache_filled=10; fi
+if (( ctx_cache_pct > 0 && ctx_cache_filled == 0 )); then ctx_cache_filled=1; fi
+
+bar_filled=$(( pct_int / 10 ))
+if (( bar_filled > 10 )); then bar_filled=10; fi
+if (( pct_int > 0 && bar_filled == 0 )); then bar_filled=1; fi
+
+# Bar has three zones: cache (dark, solid) → chat (gradient) → empty (dim)
+bar=""
+if [[ "$USE_ASCII" == "1" ]]; then
+  for (( i=0; i<10; i++ )); do
+    if (( i < ctx_cache_filled )); then bar+="="
+    elif (( i < bar_filled )); then bar+="#"
+    else bar+="-"; fi
+  done
+elif (( USE_TRUECOLOR )); then
+  for (( i=0; i<10; i++ )); do
+    if (( i < ctx_cache_filled )); then
+      # Cache zone: dark gray solid — already consumed, can't get it back
+      bar+="${CTX_CACHE_ZONE_COLOR}█"
+    elif (( i < bar_filled )); then
+      # Chat zone: original gradient color
+      bar+="\\033[38;2;${GRAD_R[$i]};${GRAD_G[$i]};${GRAD_B[$i]}m█"
+    else
+      # Empty zone: dark gray hollow
+      bar+="${EMPTY_ZONE_COLOR}░"
+    fi
+  done
+  bar+="${RST}"
+else
+  # ANSI fallback: pick color from overall percentage
+  if (( pct_int >= 90 )); then bar_color="$RED"
+  elif (( pct_int >= 70 )); then bar_color="$YELLOW"
+  else bar_color="$GREEN"; fi
+
+  for (( i=0; i<10; i++ )); do
+    if (( i < ctx_cache_filled )); then bar+="${CTX_CACHE_ZONE_COLOR}█${RST}"
+    elif (( i < bar_filled )); then bar+="${bar_color}█${RST}"
+    else bar+="${EMPTY_ZONE_COLOR}░${RST}"; fi
+  done
+fi
+
+# Cache label: pre-chat context percentage shown to the left of the
+# bar, omitted when it rounds to 0%.
+ctx_cache_label=""
+if (( ctx_cache_pct > 0 )); then
+  if (( ctx_cache_pct > 10 )); then ctx_cache_color="$RED"
+  elif (( ctx_cache_pct > 5 )); then ctx_cache_color="$YELLOW"
+  else ctx_cache_color="$GRAY"; fi
+  ctx_cache_label="${ctx_cache_color}${ctx_cache_pct}%${RST} "
+fi
+
+# Percentage text color (matches the bar's overall color)
+if (( pct_int >= 90 )); then pct_color="$RED"
+elif (( pct_int >= 70 )); then pct_color="$YELLOW"
+else pct_color="$GREEN"; fi
+
+# Warning symbol
+ctx_warn=""
+if (( pct_int >= 90 )); then ctx_warn="${RED}${S_WARN}${RST}"; fi
+
+# Context window size (only shown when model display_name lacks context info)
+to_int "${ctx_size:-0}" ctx_size_int
+ctx_label=""
+if [[ "$model" != *context* && "$model" != *Context* ]]; then
+  if (( ctx_size_int >= 1000000 )); then ctx_label=" ${GRAY}1M${RST}"
+  elif (( ctx_size_int >= 200000 )); then ctx_label=" ${GRAY}200k${RST}"
+  fi
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# Cost
+# ═══════════════════════════════════════════════════════════════
+
+cost_val="${cost:-0}"
+cost_fmt=$(LC_ALL=C printf '%.2f' "$cost_val" 2>/dev/null || echo "0.00")
+to_int "$cost_val" cost_int
+cost_str="${cost_fmt}"
+
+if (( cost_int >= 50 )); then cost_color="$RED"
+elif (( cost_int >= 10 )); then cost_color="$YELLOW"
+elif (( cost_int >= 1 )); then cost_color="$GREEN"
+else cost_color="$GRAY"; fi
+
+# ═══════════════════════════════════════════════════════════════
+# Elapsed time (smart-hidden when zero)
+# ═══════════════════════════════════════════════════════════════
 
 # Compact a duration in whole seconds into a two-tier "big small" form:
 # a large unit (days/weeks/months, whichever band applies) plus an
@@ -235,171 +477,6 @@ format_duration() {
   fi
 }
 
-# ═══════════════════════════════════════════════════════════════
-# Read JSON (single jq pass)
-# ═══════════════════════════════════════════════════════════════
-
-input=$(cat)
-
-parsed=$(echo "$input" | jq -r '
-  (.model.display_name // ""),
-  (.session_id // ""),
-  (.context_window.used_percentage // 0 | tostring),
-  (.cost.total_cost_usd // 0 | (. * 100 | round) / 100 | tostring),
-  (.workspace.current_dir // "." | split("/") | last),
-  (.worktree.branch // ""),
-  (.rate_limits.five_hour.used_percentage // -1 | tostring),
-  (.rate_limits.seven_day.used_percentage // -1 | tostring),
-  (.rate_limits.five_hour.resets_at // -1 | tostring),
-  (.rate_limits.seven_day.resets_at // -1 | tostring),
-  (.agent.name // ""),
-  (.workspace.current_dir // "."),
-  (.cost.total_lines_added // 0 | tostring),
-  (.cost.total_lines_removed // 0 | tostring),
-  (.cost.total_duration_ms // 0 | tostring),
-  (.context_window.context_window_size // 0 | tostring),
-  (.worktree.name // ""),
-  "END"
-' 2>/dev/null) || fallback_prompt "─ │ parse error"
-
-{
-  IFS= read -r model_name
-  IFS= read -r session_id
-  IFS= read -r ctx_pct
-  IFS= read -r cost
-  IFS= read -r dir
-  IFS= read -r branch
-  IFS= read -r rate5h
-  IFS= read -r rate7d
-  IFS= read -r reset5h
-  IFS= read -r reset7d
-  IFS= read -r agent_name
-  IFS= read -r cwd_full
-  IFS= read -r lines_add
-  IFS= read -r lines_rm
-  IFS= read -r duration_ms
-  IFS= read -r ctx_size
-  IFS= read -r wt_name
-  IFS= read -r _sentinel
-} <<< "$parsed"
-
-# ═══════════════════════════════════════════════════════════════
-# Model
-# ═══════════════════════════════════════════════════════════════
-
-model="${model_name:-─}"
-
-# ═══════════════════════════════════════════════════════════════
-# Boot cost snapshot
-# ═══════════════════════════════════════════════════════════════
-
-BOOT_CACHE="${STATUSLINE_TMPDIR}/claude-statusline-boot-${session_id:-default}"
-
-to_int "${ctx_pct:-0}" pct_int
-if (( pct_int < 0 )); then pct_int=0; fi
-if (( pct_int > 100 )); then pct_int=100; fi
-
-# Snapshot the boot cost on first execution.
-boot_pct=0
-if [[ ! -f "$BOOT_CACHE" ]]; then
-  echo "$pct_int" > "$BOOT_CACHE"
-  boot_pct=$pct_int
-else
-  to_int "$(cat "$BOOT_CACHE" 2>/dev/null)" boot_pct
-fi
-
-# ═══════════════════════════════════════════════════════════════
-# Context progress bar (boot zone + chat zone)
-# ═══════════════════════════════════════════════════════════════
-
-bar_filled=$(( pct_int / 10 ))
-if (( bar_filled > 10 )); then bar_filled=10; fi
-if (( pct_int > 0 && bar_filled == 0 )); then bar_filled=1; fi
-
-boot_filled=$(( boot_pct / 10 ))
-if (( boot_filled > 10 )); then boot_filled=10; fi
-if (( boot_pct > 0 && boot_filled == 0 )); then boot_filled=1; fi
-
-# Bar has three zones: boot (dark, solid) → chat (gradient) → empty (dim)
-bar=""
-if [[ "$USE_ASCII" == "1" ]]; then
-  for (( i=0; i<10; i++ )); do
-    if (( i < boot_filled )); then bar+="="
-    elif (( i < bar_filled )); then bar+="#"
-    else bar+="-"; fi
-  done
-elif (( USE_TRUECOLOR )); then
-  for (( i=0; i<10; i++ )); do
-    if (( i < boot_filled )); then
-      # Boot zone: dark gray solid — already consumed, can't get it back
-      bar+="${BOOT_ZONE_COLOR}█"
-    elif (( i < bar_filled )); then
-      # Chat zone: original gradient color
-      bar+="\\033[38;2;${GRAD_R[$i]};${GRAD_G[$i]};${GRAD_B[$i]}m█"
-    else
-      # Empty zone: dark gray hollow
-      bar+="${EMPTY_ZONE_COLOR}░"
-    fi
-  done
-  bar+="${RST}"
-else
-  # ANSI fallback: pick color from overall percentage
-  if (( pct_int >= 90 )); then bar_color="$RED"
-  elif (( pct_int >= 70 )); then bar_color="$YELLOW"
-  else bar_color="$GREEN"; fi
-
-  for (( i=0; i<10; i++ )); do
-    if (( i < boot_filled )); then bar+="${BOOT_ZONE_COLOR}█${RST}"
-    elif (( i < bar_filled )); then bar+="${bar_color}█${RST}"
-    else bar+="${EMPTY_ZONE_COLOR}░${RST}"; fi
-  done
-fi
-
-# Boot label: startup-cost percentage shown to the left of the bar,
-# omitted when it rounds to 0%.
-boot_label=""
-if (( boot_pct > 0 )); then
-  if (( boot_pct > 10 )); then boot_color="$RED"
-  elif (( boot_pct > 5 )); then boot_color="$YELLOW"
-  else boot_color="$GRAY"; fi
-  boot_label="${boot_color}${boot_pct}%${RST} "
-fi
-
-# Percentage text color (matches the bar's overall color)
-if (( pct_int >= 90 )); then pct_color="$RED"
-elif (( pct_int >= 70 )); then pct_color="$YELLOW"
-else pct_color="$GREEN"; fi
-
-# Warning symbol
-ctx_warn=""
-if (( pct_int >= 90 )); then ctx_warn="${RED}${S_WARN}${RST}"; fi
-
-# Context window size (only shown when model display_name lacks context info)
-to_int "${ctx_size:-0}" ctx_size_int
-ctx_label=""
-if [[ "$model" != *context* && "$model" != *Context* ]]; then
-  if (( ctx_size_int >= 1000000 )); then ctx_label=" ${GRAY}1M${RST}"
-  elif (( ctx_size_int >= 200000 )); then ctx_label=" ${GRAY}200k${RST}"
-  fi
-fi
-
-# ═══════════════════════════════════════════════════════════════
-# Cost
-# ═══════════════════════════════════════════════════════════════
-
-cost_val="${cost:-0}"
-cost_fmt=$(LC_ALL=C printf '%.2f' "$cost_val" 2>/dev/null || echo "0.00")
-to_int "$cost_val" cost_int
-cost_str="${cost_fmt}"
-
-if (( cost_int >= 50 )); then cost_color="$RED"
-elif (( cost_int >= 10 )); then cost_color="$YELLOW"
-elif (( cost_int >= 1 )); then cost_color="$GREEN"
-else cost_color="$GRAY"; fi
-
-# ═══════════════════════════════════════════════════════════════
-# Elapsed time (smart-hidden when zero)
-# ═══════════════════════════════════════════════════════════════
 
 to_int "${duration_ms:-0}" dur_ms
 dur_section=""
@@ -418,17 +495,6 @@ fi
 GIT_CACHE="${STATUSLINE_TMPDIR}/claude-statusline-git-$(cksum <<< "${cwd_full:-.}" | cut -d' ' -f1)"
 git_branch="${branch:-}"
 dirty=""
-
-file_mtime() {
-  local file="$1" mtime=""
-  if mtime=$(stat -c %Y "$file" 2>/dev/null) && [[ "$mtime" =~ ^[0-9]+$ ]]; then
-    printf '%s\n' "$mtime"
-  elif mtime=$(stat -f %m "$file" 2>/dev/null) && [[ "$mtime" =~ ^[0-9]+$ ]]; then
-    printf '%s\n' "$mtime"
-  else
-    printf '0\n'
-  fi
-}
 
 git_cache_is_stale() {
   [[ ! -f "$GIT_CACHE" ]] && return 0
@@ -677,13 +743,24 @@ fi
 # Assemble the output lines
 # ═══════════════════════════════════════════════════════════════
 
+# Character count of a line with its (still-literal, pre-%b) ANSI color
+# codes stripped, i.e. how many terminal columns it actually occupies.
+# Approximate: doesn't account for double-width glyphs (CJK, some
+# emoji), so a line right at the edge of the terminal width may still
+# wrap by a cell or two.
+visible_len() {
+  local stripped
+  stripped=$(printf '%s' "$1" | sed -E 's/\\033\[[0-9;]*m//g')
+  printf '%s' "${#stripped}"
+}
+
 now=$(date +%H:%M:%S)
 term_cols="${COLUMNS:-0}"
 to_int "$term_cols" term_cols
 
 line1="${PURPLE}${S_BRAND}${RST} ${CYAN}${model}${RST}"
 line1+="${SEP}${CYAN}${now}${RST}"
-line1+="${SEP}${boot_label}${bar} ${pct_color}${pct_int}%${RST}${ctx_warn}${ctx_label}"
+line1+="${SEP}${ctx_cache_label}${bar} ${pct_color}${pct_int}%${RST}${ctx_warn}${ctx_label}"
 line1+="${SEP}${cost_color}${S_COST}${cost_str}${RST}"
 line1+="${dur_section}"
 

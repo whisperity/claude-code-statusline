@@ -32,6 +32,7 @@ Turn the blank status bar into a real-time dashboard: model, context usage with 
 |---------|-------------|
 | **Gradient progress bar** | True-color (24-bit) gradient from green → yellow → red. Falls back to ANSI 256 colors or ASCII automatically. |
 | **Boot cost indicator** | Splits the bar into a dark-grey "boot" zone (context already spent on `CLAUDE.md`, rules, memory, skills before you typed anything) and the gradient "chat" zone, with a percentage label to the bar's left, colored by severity (hidden below 1%, grey 1–5%, yellow 6–10%, red 11%+). |
+| **`/compact` detection** | Two independent signals — `context_window.current_usage` going `null` then repopulating, and context usage dropping below its session high-water mark — reset the boot-cost snapshot after a compaction instead of holding a stale pre-compaction percentage for the rest of the session. |
 | **Smart hiding** | Zero values (`+0/-0`, `0m0s`, rate limits) are hidden. `$0.00` stays but dims. |
 | **Dynamic cost coloring** | 4-tier gradient: grey below $1, green $1–10, yellow $10–50, red above $50. |
 | **Git branch + dirty** | Shows branch name with a dirty marker (`*` / `Δ` / nf-oct-file_diff) for uncommitted changes. On `master`/`main`/`stable`/`trunk` the branch name turns yellow with a warning glyph, since working directly on one of these is usually a mistake worth noticing. Cached for 5 seconds to stay fast, keyed per working directory so concurrent sessions in different repos never clobber each other's snapshot. |
@@ -110,7 +111,7 @@ Claude Code's `statusLine` hook sends a JSON payload to your script via stdin af
 
 This script:
 
-1. **Single `jq` call** (~3ms) — parses all 14 fields at once
+1. **Single `jq` call** (~3ms) — parses all 17 fields at once
 2. **Git cache** (~0ms on cache hit, ~40ms on refresh) — dirty check cached for 5 seconds, keyed by a checksum of the working directory so concurrent sessions in different repos don't clobber each other's snapshot
 3. **Smart assembly** — only non-zero sections are rendered
 4. **`printf '%b'`** — interprets ANSI escape codes for the final colored output
@@ -124,6 +125,7 @@ The status line receives [these JSON fields](https://code.claude.com/docs/en/sta
 - `model.display_name` — current model
 - `session_id` — keys the boot-cost and git-branch caches so concurrent sessions don't clobber each other
 - `context_window.used_percentage` — context usage (0-100)
+- `context_window.current_usage` — `null` before the first API call and again right after `/compact`, used to detect compaction
 - `cost.total_cost_usd` — session cost
 - `cost.total_duration_ms` — elapsed time
 - `cost.total_lines_added/removed` — code changes
