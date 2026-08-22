@@ -218,10 +218,10 @@ cost_int=${cost_val%.*}
 cost_int=${cost_int:-0}
 cost_str="\$${cost_fmt}"
 
-if (( cost_int >= 10 )); then cost_color="$RED"
-elif (( cost_int >= 5 )); then cost_color="$YELLOW"
-elif [[ "$cost_fmt" == "0.00" ]]; then cost_color="$GRAY"
-else cost_color="$YELLOW"; fi
+if (( cost_int >= 50 )); then cost_color="$RED"
+elif (( cost_int >= 10 )); then cost_color="$YELLOW"
+elif (( cost_int >= 1 )); then cost_color="$GREEN"
+else cost_color="$GRAY"; fi
 
 # ═══════════════════════════════════════════════════════════════
 # Elapsed time (smart-hidden when zero)
