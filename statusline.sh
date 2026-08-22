@@ -18,6 +18,9 @@ set -euo pipefail
 # Environment detection
 # ═══════════════════════════════════════════════════════════════
 
+STATUSLINE_TMPDIR="${TMPDIR:-/tmp}"
+STATUSLINE_TMPDIR="${STATUSLINE_TMPDIR%/}"
+
 USE_ASCII="${CLAUDE_STATUSLINE_ASCII:-0}"
 USE_NERDFONT="${CLAUDE_STATUSLINE_NERDFONT:-0}"
 USE_POWERLINE="${CLAUDE_STATUSLINE_POWERLINE:-$USE_NERDFONT}"
@@ -31,6 +34,7 @@ fi
 # ═══════════════════════════════════════════════════════════════
 
 RST='\033[0m'
+BLACK='\033[30m'
 CYAN='\033[36m'
 BLUE='\033[34m'
 GRAY='\033[90m'
@@ -46,6 +50,19 @@ if (( USE_TRUECOLOR )); then
 else
   PURPLE='\033[35m'
 fi
+
+if (( USE_TRUECOLOR )); then
+  BOOT_ZONE_COLOR='\033[38;2;80;80;80m'
+  EMPTY_ZONE_COLOR='\033[38;2;60;60;60m'
+else
+  BOOT_ZONE_COLOR="$BLACK"
+  EMPTY_ZONE_COLOR="$GRAY"
+fi
+
+# Gradient colors (truecolor): green → yellow → orange → red
+GRAD_R=(46 116 186 241 239 236 233 231 211 192)
+GRAD_G=(204 195 186 196 161 126 101 76 66 57)
+GRAD_B=(113 89 64 15 24 34 44 60 50 43)
 
 # Symbol sets
 if [[ "$USE_ASCII" == "1" ]]; then
@@ -92,9 +109,6 @@ fallback_prompt() {
 }
 
 command -v jq &>/dev/null || fallback_prompt "─ │ jq not found"
-
-STATUSLINE_TMPDIR="${TMPDIR:-/tmp}"
-STATUSLINE_TMPDIR="${STATUSLINE_TMPDIR%/}"
 
 # ═══════════════════════════════════════════════════════════════
 # Read JSON (single jq pass)
@@ -161,6 +175,7 @@ pct_int=${pct_int:-0}
 if (( pct_int < 0 )); then pct_int=0; fi
 if (( pct_int > 100 )); then pct_int=100; fi
 
+# Snapshot the boot cost on first execution.
 boot_pct=0
 if [[ ! -f "$BOOT_CACHE" ]]; then
   echo "$pct_int" > "$BOOT_CACHE"
@@ -180,11 +195,6 @@ if (( bar_filled > 10 )); then bar_filled=10; fi
 boot_filled=$(( boot_pct / 10 ))
 if (( boot_filled > 10 )); then boot_filled=10; fi
 
-# Gradient colors (truecolor): green → yellow → orange → red
-GRAD_R=(46 116 186 241 239 236 233 231 211 192)
-GRAD_G=(204 195 186 196 161 126 101 76 66 57)
-GRAD_B=(113 89 64 15 24 34 44 60 50 43)
-
 # Bar has three zones: boot (dark, solid) → chat (gradient) → empty (dim)
 bar=""
 if [[ "$USE_ASCII" == "1" ]]; then
@@ -196,11 +206,14 @@ if [[ "$USE_ASCII" == "1" ]]; then
 elif (( USE_TRUECOLOR )); then
   for (( i=0; i<10; i++ )); do
     if (( i < boot_filled )); then
-      bar+="\\033[38;2;80;80;80m█"
+      # Boot zone: dark gray solid — already consumed, can't get it back
+      bar+="${BOOT_ZONE_COLOR}█"
     elif (( i < bar_filled )); then
+      # Chat zone: original gradient color
       bar+="\\033[38;2;${GRAD_R[$i]};${GRAD_G[$i]};${GRAD_B[$i]}m█"
     else
-      bar+="\\033[38;2;60;60;60m░"
+      # Empty zone: dark gray hollow
+      bar+="${EMPTY_ZONE_COLOR}░"
     fi
   done
   bar+="${RST}"
@@ -211,16 +224,17 @@ else
   else bar_color="$GREEN"; fi
 
   for (( i=0; i<10; i++ )); do
-    if (( i < boot_filled )); then bar+="${GRAY}█${RST}"
+    if (( i < boot_filled )); then bar+="${BOOT_ZONE_COLOR}█${RST}"
     elif (( i < bar_filled )); then bar+="${bar_color}█${RST}"
-    else bar+="░"; fi
+    else bar+="${EMPTY_ZONE_COLOR}░${RST}"; fi
   done
 fi
 
-# Boot label: small persistent reminder of the startup cost
+# Boot label: startup-cost percentage shown to the left of the bar,
+# omitted entirely when there's no boot cost to report.
 boot_label=""
 if (( boot_pct > 0 )); then
-  boot_label=" ${GRAY}(boot ${boot_pct}%)${RST}"
+  boot_label="${GRAY}${boot_pct}%${RST} "
 fi
 
 # Percentage text color (matches the bar's overall color)
@@ -378,6 +392,13 @@ remaining_pct_color() {
   else echo "$GREEN"; fi
 }
 
+# Warning symbol for near-exhausted capacity, same red cutoff and glyph
+# as the context bar's own warning (ctx_warn).
+rate_warn() {
+  local pct=$1
+  if (( pct <= 10 )); then echo "${RED}${S_WARN}${RST}"; fi
+}
+
 draw_remaining_bar() {
   local pct=$1
   local filled=$(( pct / 10 ))
@@ -394,7 +415,7 @@ draw_remaining_bar() {
         local gi=$(( 9 - i ))
         b+="\\033[38;2;${GRAD_R[$gi]};${GRAD_G[$gi]};${GRAD_B[$gi]}m█"
       else
-        b+="\\033[38;2;60;60;60m░"
+        b+="${EMPTY_ZONE_COLOR}░"
       fi
     done
     b+="${RST}"
@@ -429,7 +450,8 @@ if (( rate5h_int >= 0 )); then
     label5h="5h"
     label_color5h="$GRAY"
   fi
-  rate_parts+="${label_color5h}${label5h}:${RST} ${bar5h} ${color5h}${remaining5h}%${RST}"
+  warn5h=$(rate_warn "$remaining5h")
+  rate_parts+="${label_color5h}${label5h}:${RST} ${bar5h} ${color5h}${remaining5h}%${RST}${warn5h}"
 fi
 if (( rate7d_int >= 0 )); then
   remaining7d=$(( 100 - rate7d_int ))
@@ -445,8 +467,9 @@ if (( rate7d_int >= 0 )); then
     label7d="7d"
     label_color7d="$GRAY"
   fi
+  warn7d=$(rate_warn "$remaining7d")
   if [[ -n "$rate_parts" ]]; then rate_parts+=" "; fi
-  rate_parts+="${label_color7d}${label7d}:${RST} ${bar7d} ${color7d}${remaining7d}%${RST}"
+  rate_parts+="${label_color7d}${label7d}:${RST} ${bar7d} ${color7d}${remaining7d}%${RST}${warn7d}"
 fi
 if [[ -n "$rate_parts" ]]; then
   rate_section="${SEP}${rate_parts}"
@@ -465,7 +488,7 @@ else prompt_color="$GREEN"; fi
 # ═══════════════════════════════════════════════════════════════
 
 line1="${PURPLE}${S_BRAND}${RST} ${CYAN}${model}${RST}"
-line1+="${SEP}${bar} ${pct_color}${pct_int}%${RST}${boot_label}${ctx_warn}${ctx_label}"
+line1+="${SEP}${boot_label}${bar} ${pct_color}${pct_int}%${RST}${ctx_warn}${ctx_label}"
 line1+="${SEP}${cost_color}${S_COST}${cost_str}${RST}"
 line1+="${dur_section}"
 line1+="${rate_section}"
