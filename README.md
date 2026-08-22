@@ -35,7 +35,8 @@ Turn the blank status bar into a real-time dashboard: model, context usage with 
 | **Smart hiding** | Zero values (`+0/-0`, `0m0s`, rate limits) are hidden. `$0.00` stays but dims. |
 | **Dynamic cost coloring** | 4-tier gradient: grey below $1, green $1–10, yellow $10–50, red above $50. |
 | **Git branch + dirty** | Shows branch name with a dirty marker (`*` / `Δ` / nf-oct-file_diff) for uncommitted changes. On `master`/`main`/`stable`/`trunk` the branch name turns yellow with a warning glyph, since working directly on one of these is usually a mistake worth noticing. Cached for 5 seconds to stay fast, keyed per working directory so concurrent sessions in different repos never clobber each other's snapshot. |
-| **Rate limits** | 5-hour and 7-day *remaining* capacity (Claude Pro/Max only), each with its own gradient bar and a countdown to reset instead of a bare "5h"/"7d" label. Red with a warning glyph when ≤ 10% left. |
+| **Rate limits** | 5-hour and 7-day *remaining* capacity (Claude Pro/Max only), each with its own gradient bar and a mathematically-rounded countdown to reset (e.g. "45m", "3h") instead of a bare "5h"/"7d" label. Red with a warning glyph when ≤ 10% left. |
+| **Session duration** | Elapsed time compacts through days/weeks/months instead of capping at minutes+seconds, e.g. `1w3d 4h` or `1M2d 3h50m10s`. |
 | **Agent / Worktree indicator** | `⚙ code-reviewer` or `⚙⎇ worktree:my-feature` (a distinct worktree icon alongside the agent one) — only when active. |
 | **Context window size** | Shows `1M` or `200k` only when not already in the model name. |
 | **Brand identity** | `◆` diamond in Anthropic purple (#7266EA). |

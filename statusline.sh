@@ -11,12 +11,12 @@
 # On narrow terminals, the "rate limits" section moves to the front of line 2 to
 # balance the consumed space.
 #
-#   Line 1: ◆ model │ gradient progress bar percentage │ cost │ time │ rate limits | ⎇branch* │ +added/-removed │ directory
+#   Line 1: ◆ model │ clock │ gradient progress bar percentage │ cost │ time │ rate limits | ⎇branch* │ +added/-removed │ directory
 # or
-#   Line 1: ◆ model │ gradient progress bar percentage │ cost │ time │ rate limits
+#   Line 1: ◆ model │ clock │ gradient progress bar percentage │ cost │ time │ rate limits
 #   Line 2: ⎇branch* │ +added/-removed │ directory
 # or
-#   Line 1: ◆ model │ gradient progress bar percentage │ cost │ time
+#   Line 1: ◆ model │ clock │ gradient progress bar percentage │ cost │ time
 #   Line 2: rate limits │ ⎇branch* │ +added/-removed │ directory
 #
 # Environment variables:
@@ -43,8 +43,10 @@ fi
 STATUSLINE_TMPDIR="${TMPDIR:-/tmp}"
 STATUSLINE_TMPDIR="${STATUSLINE_TMPDIR%/}"
 GIT_CACHE_MAX_AGE=5
-FIVE_HOUR_WINDOW_MIN=$(( 5 * 60 ))
-SEVEN_DAY_WINDOW_MIN=$(( 7 * 24 * 60 ))
+FIVE_HOUR_GREY_THRESHOLD_MIN=$(( 3 * 60 ))
+SEVEN_DAY_GREY_THRESHOLD_MIN=$(( 72 * 60 ))
+FIVE_HOUR_GREEN_FLOOR_MIN=20
+SEVEN_DAY_GREEN_FLOOR_MIN=$(( 2 * 60 ))
 
 # ═══════════════════════════════════════════════════════════════
 # Colors and symbols
@@ -140,13 +142,15 @@ fi
 # ═══════════════════════════════════════════════════════════════
 
 fallback_prompt() {
-  printf '%b' "${GRAY}${1:-─}${RST}"
+  printf '%b' "${RED}${1:-─}${RST}"
   exit 0
 }
 
 # An unexpected failure must never leave the status line blank, because
 # empty output makes Claude Code render nothing at all.
-trap 'fallback_prompt "─"' ERR
+trap 'fallback_prompt "─ statusline failed on line $LINENO —"' ERR
+
+command -v jq &>/dev/null || fallback_prompt "─ │ jq not found"
 
 # Integer part of a value. Anything non-numeric (null, stray command
 # output) becomes 0, so it can never blow up an arithmetic context and
@@ -174,7 +178,62 @@ visible_len() {
   printf '%s' "${#stripped}"
 }
 
-command -v jq &>/dev/null || fallback_prompt "─ │ jq not found"
+# Compact a duration in whole seconds into a two-tier "big small" form:
+# a large unit (days/weeks/months, whichever band applies) plus an
+# hours-minutes-seconds tail, e.g. "1M2d 3h50m10s" or "1w3d 4h".
+# A calendar month has no fixed length without real date math, which is overkill
+# for a rough session-age display, so months are approximated at 30 days.
+format_duration() {
+  local total=$1
+  local -r SEC_MIN=60 SEC_HOUR=3600 SEC_DAY=86400 SEC_WEEK=604800 SEC_MONTH=2592000
+  local big="" rem=$total
+  if (( total >= SEC_MONTH )); then
+    local months=$(( total / SEC_MONTH ))
+    rem=$(( total % SEC_MONTH ))
+    local days=$(( rem / SEC_DAY ))
+    rem=$(( rem % SEC_DAY ))
+    big="${months}M"
+    if (( days > 0 )); then big+="${days}d"; fi
+  elif (( total >= SEC_WEEK )); then
+    local weeks=$(( total / SEC_WEEK ))
+    rem=$(( total % SEC_WEEK ))
+    local days=$(( rem / SEC_DAY ))
+    rem=$(( rem % SEC_DAY ))
+    big="${weeks}w"
+    if (( days > 0 )); then big+="${days}d"; fi
+  elif (( total >= SEC_DAY )); then
+    local days=$(( total / SEC_DAY ))
+    rem=$(( total % SEC_DAY ))
+    big="${days}d"
+  fi
+
+  local h=$(( rem / SEC_HOUR ))
+  local rem2=$(( rem % SEC_HOUR ))
+  local m=$(( rem2 / SEC_MIN ))
+  local s=$(( rem2 % SEC_MIN ))
+
+  local small=""
+  if (( h > 0 )); then
+    small="${h}h"
+    if (( m > 0 || s > 0 )); then small+="${m}m"; fi
+    if (( s > 0 )); then small+="${s}s"; fi
+  elif (( m > 0 )); then
+    small="${m}m"
+    if (( s > 0 )); then small+="${s}s"; fi
+  elif (( s > 0 )); then
+    small="${s}s"
+  fi
+
+  if [[ -n "$big" && -n "$small" ]]; then
+    echo "${big} ${small}"
+  elif [[ -n "$big" ]]; then
+    echo "$big"
+  elif [[ -n "$small" ]]; then
+    echo "$small"
+  else
+    echo "0s"
+  fi
+}
 
 # ═══════════════════════════════════════════════════════════════
 # Read JSON (single jq pass)
@@ -346,11 +405,9 @@ to_int "${duration_ms:-0}" dur_ms
 dur_section=""
 if (( dur_ms > 0 )); then
   dur_sec=$((dur_ms / 1000))
-  dur_min=$((dur_sec / 60))
-  dur_s=$((dur_sec % 60))
-  # Skip display if it still formats to 0m0s (dur_ms may be a few hundred ms early in a session)
-  if (( dur_min > 0 || dur_s > 0 )); then
-    dur_section="${SEP}${GRAY}${S_TIME}${dur_min}m${dur_s}s${RST}"
+  # Skip display if it still formats to 0s (dur_ms may be a few hundred ms early in a session)
+  if (( dur_sec > 0 )); then
+    dur_section="${SEP}${GRAY}${S_TIME}$(format_duration "$dur_sec")${RST}"
   fi
 fi
 
@@ -422,7 +479,7 @@ fi
 # Rate limits (shown conditionally, as remaining capacity)
 # ═══════════════════════════════════════════════════════════════
 
-reset_minutes() {
+reset_seconds() {
   local resets_at="$1" now="$2"
   if [[ -z "$resets_at" || "$resets_at" == "-1" ]]; then
     return
@@ -431,33 +488,99 @@ reset_minutes() {
   to_int "$resets_at" resets_at_int
   local delta=$(( resets_at_int - now ))
   if (( delta < 0 )); then delta=0; fi
-  echo $(( delta / 60 ))
+  echo "$delta"
 }
 
-format_reset_label() {
-  local minutes=$1
-  if (( minutes >= 100 )); then
-    echo "$(( minutes / 60 ))h"
+round_half_up() { # $1=n $2=d
+  echo $(( (2*$1 + $2) / (2*$2) ))
+}
+
+format_5h_reset() {
+  local delta=$1
+  local floor_min=$(( delta / 60 ))
+  if (( floor_min >= 100 )); then
+    echo "$(round_half_up "$delta" 3600)h"
+  elif (( floor_min >= 10 )); then
+    local m
+    m=$(round_half_up "$delta" 60)
+    if (( m > 99 )); then m=99; fi
+    echo "${m}m"
   else
-    echo "${minutes}m"
+    local m=$(( delta / 60 )) s=$(( delta % 60 ))
+    if (( m > 0 )); then
+      if (( s > 0 )); then echo "${m}m${s}s"; else echo "${m}m"; fi
+    else
+      echo "${s}s"
+    fi
   fi
 }
 
+format_7d_reset() {
+  local delta=$1
+  local floor_min=$(( delta / 60 ))
+  if (( floor_min > 4320 )); then
+    echo "$(round_half_up "$delta" 86400)d"
+  elif (( floor_min > 720 )); then
+    echo "$(round_half_up "$delta" 3600)h"
+  elif (( floor_min >= 120 )); then
+    local hours_part=$(( delta / 3600 ))
+    local rem_sec=$(( delta % 3600 ))
+    local rem_min
+    rem_min=$(round_half_up "$rem_sec" 60)
+    if (( rem_min == 60 )); then
+      hours_part=$(( hours_part + 1 ))
+      rem_min=0
+    fi
+    if (( rem_min > 0 )); then
+      echo "${hours_part}h${rem_min}m"
+    else
+      echo "${hours_part}h"
+    fi
+  elif (( floor_min >= 10 )); then
+    local m
+    m=$(round_half_up "$delta" 60)
+    if (( m > 119 )); then m=119; fi
+    echo "${m}m"
+  else
+    local m=$(( delta / 60 )) s=$(( delta % 60 ))
+    if (( m > 0 )); then
+      if (( s > 0 )); then echo "${m}m${s}s"; else echo "${m}m"; fi
+    else
+      echo "${s}s"
+    fi
+  fi
+}
+
+# Color for the reset countdown: grey above grey_threshold_min, green
+# at or below green_floor_min (a hard cutoff, not part of the
+# continuous scale), and otherwise 9 gradient stops (indices 1-9; index 0 is
+# reserved for the green floor) spread to 8 equal steps across the interval:
+# (green_floor_min, grey_threshold_min].
 time_left_color() {
-  local minutes=$1 window_min=$2
-  local frac_pct=$(( minutes * 100 / window_min ))
-  if (( frac_pct > 50 )); then
+  local floor_min=$1 grey_threshold_min=$2 green_floor_min=$3
+  if (( floor_min > grey_threshold_min )); then
     echo "$GRAY"
     return
   fi
+  if (( floor_min <= green_floor_min )); then
+    if (( USE_TRUECOLOR )); then
+      printf '%s\n' "\\033[38;2;${GRAD_R[0]};${GRAD_G[0]};${GRAD_B[0]}m"
+    else
+      echo "$GREEN"
+    fi
+    return
+  fi
+  local span=$(( grey_threshold_min - green_floor_min ))
   if (( USE_TRUECOLOR )); then
-    local gi=$(( frac_pct * 9 / 50 ))
+    local gi=$(( 1 + (floor_min - green_floor_min) * 8 / span ))
     if (( gi > 9 )); then gi=9; fi
-    if (( gi < 0 )); then gi=0; fi
     printf '%s\n' "\\033[38;2;${GRAD_R[$gi]};${GRAD_G[$gi]};${GRAD_B[$gi]}m"
-  elif (( frac_pct > 33 )); then echo "$RED"
-  elif (( frac_pct > 16 )); then echo "$YELLOW"
-  else echo "$GREEN"; fi
+  else
+    local frac_pct=$(( (floor_min - green_floor_min) * 100 / span ))
+    if (( frac_pct > 66 )); then echo "$RED"
+    elif (( frac_pct > 33 )); then echo "$YELLOW"
+    else echo "$GREEN"; fi
+  fi
 }
 
 remaining_pct_color() {
@@ -517,10 +640,10 @@ if (( rate5h_int >= 0 )); then
   if (( remaining5h > 100 )); then remaining5h=100; fi
   bar5h=$(draw_remaining_bar "$remaining5h")
   color5h=$(remaining_pct_color "$remaining5h")
-  min5h=$(reset_minutes "$reset5h" "$now_epoch")
-  if [[ -n "$min5h" ]]; then
-    label5h=$(format_reset_label "$min5h")
-    label_color5h=$(time_left_color "$min5h" "$FIVE_HOUR_WINDOW_MIN")
+  sec5h=$(reset_seconds "$reset5h" "$now_epoch")
+  if [[ -n "$sec5h" ]]; then
+    label5h=$(format_5h_reset "$sec5h")
+    label_color5h=$(time_left_color "$(( sec5h / 60 ))" "$FIVE_HOUR_GREY_THRESHOLD_MIN" "$FIVE_HOUR_GREEN_FLOOR_MIN")
   else
     label5h="5h"
     label_color5h="$GRAY"
@@ -534,10 +657,10 @@ if (( rate7d_int >= 0 )); then
   if (( remaining7d > 100 )); then remaining7d=100; fi
   bar7d=$(draw_remaining_bar "$remaining7d")
   color7d=$(remaining_pct_color "$remaining7d")
-  min7d=$(reset_minutes "$reset7d" "$now_epoch")
-  if [[ -n "$min7d" ]]; then
-    label7d=$(format_reset_label "$min7d")
-    label_color7d=$(time_left_color "$min7d" "$SEVEN_DAY_WINDOW_MIN")
+  sec7d=$(reset_seconds "$reset7d" "$now_epoch")
+  if [[ -n "$sec7d" ]]; then
+    label7d=$(format_7d_reset "$sec7d")
+    label_color7d=$(time_left_color "$(( sec7d / 60 ))" "$SEVEN_DAY_GREY_THRESHOLD_MIN" "$SEVEN_DAY_GREEN_FLOOR_MIN")
   else
     label7d="7d"
     label_color7d="$GRAY"
@@ -554,10 +677,12 @@ fi
 # Assemble the output lines
 # ═══════════════════════════════════════════════════════════════
 
+now=$(date +%H:%M:%S)
 term_cols="${COLUMNS:-0}"
 to_int "$term_cols" term_cols
 
 line1="${PURPLE}${S_BRAND}${RST} ${CYAN}${model}${RST}"
+line1+="${SEP}${CYAN}${now}${RST}"
 line1+="${SEP}${boot_label}${bar} ${pct_color}${pct_int}%${RST}${ctx_warn}${ctx_label}"
 line1+="${SEP}${cost_color}${S_COST}${cost_str}${RST}"
 line1+="${dur_section}"
