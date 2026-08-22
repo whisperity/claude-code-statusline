@@ -102,7 +102,7 @@ input=$(cat)
 parsed=$(echo "$input" | jq -r '
   (.model.display_name // ""),
   (.context_window.used_percentage // 0 | tostring),
-  (.cost.total_cost_usd // 0 | tostring),
+  (.cost.total_cost_usd // 0 | (. * 100 | round) / 100 | tostring),
   (.workspace.current_dir // "." | split("/") | last),
   (.worktree.branch // ""),
   (.rate_limits.five_hour.used_percentage // -1 | tostring),
@@ -209,9 +209,10 @@ fi
 # ═══════════════════════════════════════════════════════════════
 
 cost_val="${cost:-0}"
-cost_fmt=$(printf '%.2f' "$cost_val" 2>/dev/null || echo "0.00")
+cost_fmt=$(LC_ALL=C printf '%.2f' "$cost_val" 2>/dev/null || echo "0.00")
 cost_int=${cost_val%.*}
 cost_int=${cost_int:-0}
+cost_str="\$${cost_fmt}"
 
 if (( cost_int >= 10 )); then cost_color="$RED"
 elif (( cost_int >= 5 )); then cost_color="$YELLOW"
@@ -325,7 +326,7 @@ else prompt_color="$GREEN"; fi
 
 line1="${PURPLE}${S_BRAND}${RST} ${CYAN}${model}${RST}"
 line1+="${SEP}${bar} ${pct_color}${pct_int}%${RST}${ctx_warn}${ctx_label}"
-line1+="${SEP}${cost_color}${S_COST}\$${cost_fmt}${RST}"
+line1+="${SEP}${cost_color}${S_COST}${cost_str}${RST}"
 line1+="${dur_section}"
 line1+="${rate_section}"
 
