@@ -34,7 +34,7 @@ Turn the blank status bar into a real-time dashboard: model, context usage with 
 | **Smart hiding** | Zero values (`+0/-0`, `0m0s`, rate limits) are hidden. `$0.00` stays but dims. |
 | **Dynamic cost coloring** | Yellow by default, red when > $10. |
 | **Git branch + dirty** | Shows branch name with `*` for uncommitted changes. Cached for 5 seconds to stay fast. |
-| **Rate limits** | 5-hour and 7-day usage (Claude Pro/Max only). Red when > 80%. |
+| **Rate limits** | 5-hour and 7-day *remaining* capacity (Claude Pro/Max only), each with its own gradient bar and a countdown to reset instead of a bare "5h"/"7d" label. Red when ≤ 10% left. |
 | **Agent / Worktree indicator** | `⚙ code-reviewer` or `⚙ worktree:my-feature` — only when active. |
 | **Context window size** | Shows `1M` or `200k` only when not already in the model name. |
 | **Brand identity** | `◆` diamond in Anthropic purple (#7266EA). |

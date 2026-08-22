@@ -107,6 +107,8 @@ parsed=$(echo "$input" | jq -r '
   (.worktree.branch // ""),
   (.rate_limits.five_hour.used_percentage // -1 | tostring),
   (.rate_limits.seven_day.used_percentage // -1 | tostring),
+  (.rate_limits.five_hour.resets_at // -1 | tostring),
+  (.rate_limits.seven_day.resets_at // -1 | tostring),
   (.agent.name // ""),
   (.workspace.current_dir // "."),
   (.cost.total_lines_added // 0 | tostring),
@@ -125,6 +127,8 @@ parsed=$(echo "$input" | jq -r '
   IFS= read -r branch
   IFS= read -r rate5h
   IFS= read -r rate7d
+  IFS= read -r reset5h
+  IFS= read -r reset7d
   IFS= read -r agent_name
   IFS= read -r cwd_full
   IFS= read -r lines_add
@@ -291,22 +295,102 @@ if (( lines_add > 0 || lines_rm > 0 )); then
 fi
 
 # ═══════════════════════════════════════════════════════════════
-# Rate limits (shown conditionally)
+# Rate limits (shown conditionally, as remaining capacity)
 # ═══════════════════════════════════════════════════════════════
+#
+# The status JSON reports how much of the 5h/7d window has been USED.
+# We invert that to show what's REMAINING (more intuitive at a glance),
+# so the coloring/bar direction is the mirror image of the context bar:
+# large remaining % = green, small remaining % = red.
+
+# Reset-time label: given a resets_at epoch and "now", render a rounded
+# countdown ("45m", "3h"); minutes >= 100 collapse to whole hours.
+format_reset() {
+  local resets_at="$1" now="$2"
+  if [[ -z "$resets_at" || "$resets_at" == "-1" ]]; then
+    return
+  fi
+  local resets_at_int=${resets_at%.*}
+  local delta=$(( resets_at_int - now ))
+  if (( delta < 0 )); then delta=0; fi
+  local minutes=$(( delta / 60 ))
+  if (( minutes >= 100 )); then
+    echo "$(( minutes / 60 ))h"
+  else
+    echo "${minutes}m"
+  fi
+}
+
+# Remaining-capacity color: inverted thresholds vs. the context bar
+# (small remaining % = red, large remaining % = green).
+remaining_pct_color() {
+  local pct=$1
+  if (( pct <= 10 )); then echo "$RED"
+  elif (( pct <= 30 )); then echo "$YELLOW"
+  else echo "$GREEN"; fi
+}
+
+# Remaining-capacity progress bar: same gradient track as the context
+# bar (GRAD_R/G/B, green → red) but read back-to-front, so a nearly-full
+# bar (lots remaining) lands on the green end and a nearly-empty bar
+# (little remaining) lands on the red end.
+draw_remaining_bar() {
+  local pct=$1
+  local filled=$(( pct / 10 ))
+  if (( filled > 10 )); then filled=10; fi
+  if (( filled < 0 )); then filled=0; fi
+  local b=""
+  if [[ "$USE_ASCII" == "1" ]]; then
+    for (( i=0; i<10; i++ )); do
+      if (( i < filled )); then b+="#"; else b+="-"; fi
+    done
+  elif (( USE_TRUECOLOR )); then
+    for (( i=0; i<10; i++ )); do
+      if (( i < filled )); then
+        local gi=$(( 9 - i ))
+        b+="\\033[38;2;${GRAD_R[$gi]};${GRAD_G[$gi]};${GRAD_B[$gi]}m█"
+      else
+        b+="\\033[38;2;60;60;60m░"
+      fi
+    done
+    b+="${RST}"
+  else
+    local bcolor
+    bcolor=$(remaining_pct_color "$pct")
+    for (( i=0; i<10; i++ )); do
+      if (( i < filled )); then b+="█"; else b+="░"; fi
+    done
+    b="${bcolor}${b}${RST}"
+  fi
+  echo "$b"
+}
 
 rate_section=""
 rate5h_int=${rate5h%.*}; rate5h_int=${rate5h_int:-0}
 rate7d_int=${rate7d%.*}; rate7d_int=${rate7d_int:-0}
+now_epoch=$(date +%s)
 
 rate_parts=""
 if (( rate5h_int >= 0 )); then
-  if (( rate5h_int >= 80 )); then rate_parts+="${RED}5h:${rate5h_int}%${RST}"
-  else rate_parts+="${GRAY}5h:${rate5h_int}%${RST}"; fi
+  remaining5h=$(( 100 - rate5h_int ))
+  if (( remaining5h < 0 )); then remaining5h=0; fi
+  if (( remaining5h > 100 )); then remaining5h=100; fi
+  bar5h=$(draw_remaining_bar "$remaining5h")
+  color5h=$(remaining_pct_color "$remaining5h")
+  label5h=$(format_reset "$reset5h" "$now_epoch")
+  label5h="${label5h:-5h}"
+  rate_parts+="${GRAY}${label5h}:${RST} ${bar5h} ${color5h}${remaining5h}%${RST}"
 fi
 if (( rate7d_int >= 0 )); then
+  remaining7d=$(( 100 - rate7d_int ))
+  if (( remaining7d < 0 )); then remaining7d=0; fi
+  if (( remaining7d > 100 )); then remaining7d=100; fi
+  bar7d=$(draw_remaining_bar "$remaining7d")
+  color7d=$(remaining_pct_color "$remaining7d")
+  label7d=$(format_reset "$reset7d" "$now_epoch")
+  label7d="${label7d:-7d}"
   if [[ -n "$rate_parts" ]]; then rate_parts+=" "; fi
-  if (( rate7d_int >= 80 )); then rate_parts+="${RED}7d:${rate7d_int}%${RST}"
-  else rate_parts+="${GRAY}7d:${rate7d_int}%${RST}"; fi
+  rate_parts+="${GRAY}${label7d}:${RST} ${bar7d} ${color7d}${remaining7d}%${RST}"
 fi
 if [[ -n "$rate_parts" ]]; then
   rate_section="${SEP}${rate_parts}"
