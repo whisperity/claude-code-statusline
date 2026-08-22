@@ -231,10 +231,14 @@ else
 fi
 
 # Boot label: startup-cost percentage shown to the left of the bar,
-# omitted entirely when there's no boot cost to report.
+# omitted when it rounds to 0%. Color escalates with how much of the
+# context budget startup config ate: 1-5% grey, 6-10% yellow, 11%+ red.
 boot_label=""
 if (( boot_pct > 0 )); then
-  boot_label="${GRAY}${boot_pct}%${RST} "
+  if (( boot_pct > 10 )); then boot_color="$RED"
+  elif (( boot_pct > 5 )); then boot_color="$YELLOW"
+  else boot_color="$GRAY"; fi
+  boot_label="${boot_color}${boot_pct}%${RST} "
 fi
 
 # Percentage text color (matches the bar's overall color)

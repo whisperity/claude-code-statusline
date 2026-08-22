@@ -31,7 +31,7 @@ Turn the blank status bar into a real-time dashboard: model, context usage with 
 | Feature | Description |
 |---------|-------------|
 | **Gradient progress bar** | True-color (24-bit) gradient from green → yellow → red. Falls back to ANSI 256 colors or ASCII automatically. |
-| **Boot cost indicator** | Splits the bar into a dark-grey "boot" zone (context already spent on `CLAUDE.md`, rules, memory, skills before you typed anything) and the gradient "chat" zone, with a percentage label to the bar's left — omitted entirely when there's no boot cost to report. |
+| **Boot cost indicator** | Splits the bar into a dark-grey "boot" zone (context already spent on `CLAUDE.md`, rules, memory, skills before you typed anything) and the gradient "chat" zone, with a percentage label to the bar's left, colored by severity (hidden below 1%, grey 1–5%, yellow 6–10%, red 11%+). |
 | **Smart hiding** | Zero values (`+0/-0`, `0m0s`, rate limits) are hidden. `$0.00` stays but dims. |
 | **Dynamic cost coloring** | 4-tier gradient: grey below $1, green $1–10, yellow $10–50, red above $50. |
 | **Git branch + dirty** | Shows branch name with `*` for uncommitted changes. Cached for 5 seconds to stay fast. |
