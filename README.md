@@ -4,8 +4,6 @@
 
 # ◆ claude-code-statusline
 
-**English** | [繁體中文](README.zh-TW.md)
-
 A beautiful, information-dense status line for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — the CLI tool by Anthropic.
 
 Turn the blank status bar into a real-time dashboard: model, context usage with gradient progress bar, cost, duration, git branch, rate limits, and more.
