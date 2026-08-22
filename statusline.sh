@@ -297,15 +297,8 @@ fi
 # ═══════════════════════════════════════════════════════════════
 # Rate limits (shown conditionally, as remaining capacity)
 # ═══════════════════════════════════════════════════════════════
-#
-# The status JSON reports how much of the 5h/7d window has been USED.
-# We invert that to show what's REMAINING (more intuitive at a glance),
-# so the coloring/bar direction is the mirror image of the context bar:
-# large remaining % = green, small remaining % = red.
 
-# Reset-time label: given a resets_at epoch and "now", render a rounded
-# countdown ("45m", "3h"); minutes >= 100 collapse to whole hours.
-format_reset() {
+reset_minutes() {
   local resets_at="$1" now="$2"
   if [[ -z "$resets_at" || "$resets_at" == "-1" ]]; then
     return
@@ -313,7 +306,11 @@ format_reset() {
   local resets_at_int=${resets_at%.*}
   local delta=$(( resets_at_int - now ))
   if (( delta < 0 )); then delta=0; fi
-  local minutes=$(( delta / 60 ))
+  echo $(( delta / 60 ))
+}
+
+format_reset_label() {
+  local minutes=$1
   if (( minutes >= 100 )); then
     echo "$(( minutes / 60 ))h"
   else
@@ -321,8 +318,26 @@ format_reset() {
   fi
 }
 
-# Remaining-capacity color: inverted thresholds vs. the context bar
-# (small remaining % = red, large remaining % = green).
+time_left_color() {
+  local minutes=$1 window_min=$2
+  local frac_pct=$(( minutes * 100 / window_min ))
+  if (( frac_pct > 50 )); then
+    echo "$GRAY"
+    return
+  fi
+  if (( USE_TRUECOLOR )); then
+    local gi=$(( frac_pct * 9 / 50 ))
+    if (( gi > 9 )); then gi=9; fi
+    if (( gi < 0 )); then gi=0; fi
+    printf '%s\n' "\\033[38;2;${GRAD_R[$gi]};${GRAD_G[$gi]};${GRAD_B[$gi]}m"
+  elif (( frac_pct > 33 )); then echo "$RED"
+  elif (( frac_pct > 16 )); then echo "$YELLOW"
+  else echo "$GREEN"; fi
+}
+
+FIVE_HOUR_WINDOW_MIN=$(( 5 * 60 ))
+SEVEN_DAY_WINDOW_MIN=$(( 7 * 24 * 60 ))
+
 remaining_pct_color() {
   local pct=$1
   if (( pct <= 10 )); then echo "$RED"
@@ -330,10 +345,6 @@ remaining_pct_color() {
   else echo "$GREEN"; fi
 }
 
-# Remaining-capacity progress bar: same gradient track as the context
-# bar (GRAD_R/G/B, green → red) but read back-to-front, so a nearly-full
-# bar (lots remaining) lands on the green end and a nearly-empty bar
-# (little remaining) lands on the red end.
 draw_remaining_bar() {
   local pct=$1
   local filled=$(( pct / 10 ))
@@ -377,9 +388,15 @@ if (( rate5h_int >= 0 )); then
   if (( remaining5h > 100 )); then remaining5h=100; fi
   bar5h=$(draw_remaining_bar "$remaining5h")
   color5h=$(remaining_pct_color "$remaining5h")
-  label5h=$(format_reset "$reset5h" "$now_epoch")
-  label5h="${label5h:-5h}"
-  rate_parts+="${GRAY}${label5h}:${RST} ${bar5h} ${color5h}${remaining5h}%${RST}"
+  min5h=$(reset_minutes "$reset5h" "$now_epoch")
+  if [[ -n "$min5h" ]]; then
+    label5h=$(format_reset_label "$min5h")
+    label_color5h=$(time_left_color "$min5h" "$FIVE_HOUR_WINDOW_MIN")
+  else
+    label5h="5h"
+    label_color5h="$GRAY"
+  fi
+  rate_parts+="${label_color5h}${label5h}:${RST} ${bar5h} ${color5h}${remaining5h}%${RST}"
 fi
 if (( rate7d_int >= 0 )); then
   remaining7d=$(( 100 - rate7d_int ))
@@ -387,10 +404,16 @@ if (( rate7d_int >= 0 )); then
   if (( remaining7d > 100 )); then remaining7d=100; fi
   bar7d=$(draw_remaining_bar "$remaining7d")
   color7d=$(remaining_pct_color "$remaining7d")
-  label7d=$(format_reset "$reset7d" "$now_epoch")
-  label7d="${label7d:-7d}"
+  min7d=$(reset_minutes "$reset7d" "$now_epoch")
+  if [[ -n "$min7d" ]]; then
+    label7d=$(format_reset_label "$min7d")
+    label_color7d=$(time_left_color "$min7d" "$SEVEN_DAY_WINDOW_MIN")
+  else
+    label7d="7d"
+    label_color7d="$GRAY"
+  fi
   if [[ -n "$rate_parts" ]]; then rate_parts+=" "; fi
-  rate_parts+="${GRAY}${label7d}:${RST} ${bar7d} ${color7d}${remaining7d}%${RST}"
+  rate_parts+="${label_color7d}${label7d}:${RST} ${bar7d} ${color7d}${remaining7d}%${RST}"
 fi
 if [[ -n "$rate_parts" ]]; then
   rate_section="${SEP}${rate_parts}"
