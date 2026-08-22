@@ -40,6 +40,7 @@ Turn the blank status bar into a real-time dashboard: model, context usage with 
 | **Context window size** | Shows `1M` or `200k` only when not already in the model name. |
 | **Brand identity** | `◆` diamond in Anthropic purple (#7266EA). |
 | **3-tier rendering** | True color → ANSI → ASCII. Works in any terminal. |
+| **Adaptive line count** | Collapses onto a single line when the terminal is wide enough to fit everything, otherwise wraps to two, moving rate limits to the front of line 2 on narrow terminals so it doesn't flow off screen. |
 | **Nerd Font support** | Optional: ``, `󰔟`, `` icons. Set `CLAUDE_STATUSLINE_NERDFONT=1`. |
 | **Powerline separators** | Optional: `` arrows. Set `CLAUDE_STATUSLINE_POWERLINE=1`. |
 | **< 50ms** | Single `jq` call + cached git. No perceptible lag. |

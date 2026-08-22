@@ -1,12 +1,26 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2154
+# SC2154: to_int() assigns its target variable indirectly via `printf -v`, and
+# \shellcheck can't trace the name back to any call site and flags every usage
+# as "<> referenced but not assigned".
+#
 # ~/.claude/statusline.sh — Claude Code session status line (aesthetic edition)
 #
-# Three-line output:
+# Response output between one-line and two-line versions.
+# One-line if the terminal is wide enough to fit everything, otherwise two-line.
+# On narrow terminals, the "rate limits" section moves to the front of line 2 to
+# balance the consumed space.
+#
+#   Line 1: ◆ model │ gradient progress bar percentage │ cost │ time │ rate limits | ⎇branch* │ +added/-removed │ directory
+# or
 #   Line 1: ◆ model │ gradient progress bar percentage │ cost │ time │ rate limits
 #   Line 2: ⎇branch* │ +added/-removed │ directory
-#   Line 3: ❯ prompt (color tied to context usage)
+# or
+#   Line 1: ◆ model │ gradient progress bar percentage │ cost │ time
+#   Line 2: rate limits │ ⎇branch* │ +added/-removed │ directory
 #
 # Environment variables:
+#
 #   CLAUDE_STATUSLINE_ASCII=1     fall back to plain ASCII
 #   CLAUDE_STATUSLINE_NERDFONT=1  enable Nerd Font icons
 #   CLAUDE_STATUSLINE_POWERLINE=1 enable Powerline separators (defaults to NERDFONT)
@@ -72,7 +86,6 @@ if [[ "$USE_ASCII" == "1" ]]; then
   S_BRAND="<>"
   S_BRANCH=">"
   S_WARN="!"
-  S_PROMPT=">"
   S_TIME="@ "
   S_COST=$'$ '
   S_DIRTY="*"
@@ -84,7 +97,6 @@ elif [[ "$USE_NERDFONT" == "1" ]]; then
   S_BRAND=$' '
   S_BRANCH=$' '
   S_WARN=" 󰀦"
-  S_PROMPT="❯"
   S_TIME=" "
   S_COST=$' '
   S_DIRTY=$''
@@ -99,7 +111,6 @@ elif [[ "$USE_NERDFONT" == "1" ]]; then
 else
   S_BRAND="◆"
   S_WARN=" ⚠"
-  S_PROMPT="❯"
   S_TIME="⏲ "
   S_COST=$'$ '
   S_DIRTY="Δ"
@@ -150,6 +161,17 @@ to_int() { # $1=raw value  $2=target variable name
   fi
   [[ "$v" =~ ^-?[0-9]+$ ]] || v=0
   printf -v "$2" '%s' "$v"
+}
+
+# Character count of a line with its (still-literal, pre-%b) ANSI color
+# codes stripped, i.e. how many terminal columns it actually occupies.
+# Approximate: doesn't account for double-width glyphs (CJK, some
+# emoji), so a line right at the edge of the terminal width may still
+# wrap by a cell or two.
+visible_len() {
+  local stripped
+  stripped=$(printf '%s' "$1" | sed -E 's/\\033\[[0-9;]*m//g')
+  printf '%s' "${#stripped}"
 }
 
 command -v jq &>/dev/null || fallback_prompt "─ │ jq not found"
@@ -337,7 +359,6 @@ fi
 # ═══════════════════════════════════════════════════════════════
 
 GIT_CACHE="${STATUSLINE_TMPDIR}/claude-statusline-git-$(cksum <<< "${cwd_full:-.}" | cut -d' ' -f1)"
-
 git_branch="${branch:-}"
 dirty=""
 
@@ -530,26 +551,18 @@ if [[ -n "$rate_parts" ]]; then
 fi
 
 # ═══════════════════════════════════════════════════════════════
-# Dynamic prompt (color tied to context usage)
+# Assemble the output lines
 # ═══════════════════════════════════════════════════════════════
 
-if (( pct_int >= 90 )); then prompt_color="$RED"
-elif (( pct_int >= 70 )); then prompt_color="$YELLOW"
-else prompt_color="$GREEN"; fi
-
-# ═══════════════════════════════════════════════════════════════
-# Assemble line 1
-# ═══════════════════════════════════════════════════════════════
+term_cols="${COLUMNS:-0}"
+to_int "$term_cols" term_cols
 
 line1="${PURPLE}${S_BRAND}${RST} ${CYAN}${model}${RST}"
 line1+="${SEP}${boot_label}${bar} ${pct_color}${pct_int}%${RST}${ctx_warn}${ctx_label}"
 line1+="${SEP}${cost_color}${S_COST}${cost_str}${RST}"
 line1+="${dur_section}"
-line1+="${rate_section}"
 
-# ═══════════════════════════════════════════════════════════════
-# Assemble line 2
-# ═══════════════════════════════════════════════════════════════
+line1_wide="${line1}${rate_section}"
 
 parts=()
 if [[ -n "$git_branch" ]]; then
@@ -577,9 +590,18 @@ for i in "${!parts[@]}"; do
   line2+="${parts[$i]}"
 done
 
+combined_len=$(( $(visible_len "$line1_wide") + $(visible_len "$SEP") + $(visible_len "$line2") ))
+
 # ═══════════════════════════════════════════════════════════════
 # Output
 # ═══════════════════════════════════════════════════════════════
 
-# Only output two lines (Claude Code has its own input prompt, ours ❯ isn't needed)
-printf '%b\n%b' "$line1" "$line2"
+if (( term_cols > 0 && combined_len <= term_cols )); then
+  printf '%b' "${line1_wide}${SEP}${line2}"
+else
+  line2_narrow="$line2"
+  if [[ -n "$rate_parts" ]]; then
+    line2_narrow="${rate_parts}${SEP}${line2}"
+  fi
+  printf '%b\n%b' "$line1" "$line2_narrow"
+fi
