@@ -79,7 +79,7 @@ elif [[ "$USE_NERDFONT" == "1" ]]; then
   S_WARN=" 󰀦"
   S_PROMPT="❯"
   S_TIME="󰔟 "
-  S_COST=" "
+  S_COST=$' '
   if [[ "$USE_POWERLINE" == "1" ]]; then
     SEP=$'  '
   else
@@ -89,8 +89,8 @@ else
   S_BRAND="◆"
   S_WARN=" ⚠"
   S_PROMPT="❯"
-  S_TIME=""
-  S_COST=""
+  S_TIME="⏲ "
+  S_COST="ƒ "
   if [[ "$USE_POWERLINE" == "1" ]]; then
     # U+E0A0 is a Powerline glyph, so it is available whenever Powerline
     # separators are. It is monospace, so it occupies exactly one cell.
