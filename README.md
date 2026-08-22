@@ -34,7 +34,7 @@ Turn the blank status bar into a real-time dashboard: model, context usage with 
 | **Boot cost indicator** | Splits the bar into a dark-grey "boot" zone (context already spent on `CLAUDE.md`, rules, memory, skills before you typed anything) and the gradient "chat" zone, with a percentage label to the bar's left, colored by severity (hidden below 1%, grey 1–5%, yellow 6–10%, red 11%+). |
 | **Smart hiding** | Zero values (`+0/-0`, `0m0s`, rate limits) are hidden. `$0.00` stays but dims. |
 | **Dynamic cost coloring** | 4-tier gradient: grey below $1, green $1–10, yellow $10–50, red above $50. |
-| **Git branch + dirty** | Shows branch name with a dirty marker (`*` / `Δ` / nf-cod-diff_modified) for uncommitted changes. Cached for 5 seconds to stay fast, keyed per working directory so concurrent sessions in different repos never clobber each other's snapshot. |
+| **Git branch + dirty** | Shows branch name with a dirty marker (`*` / `Δ` / nf-oct-file_diff) for uncommitted changes. On `master`/`main`/`stable`/`trunk` the branch name turns yellow with a warning glyph, since working directly on one of these is usually a mistake worth noticing. Cached for 5 seconds to stay fast, keyed per working directory so concurrent sessions in different repos never clobber each other's snapshot. |
 | **Rate limits** | 5-hour and 7-day *remaining* capacity (Claude Pro/Max only), each with its own gradient bar and a countdown to reset instead of a bare "5h"/"7d" label. Red with a warning glyph when ≤ 10% left. |
 | **Agent / Worktree indicator** | `⚙ code-reviewer` or `⚙⎇ worktree:my-feature` (a distinct worktree icon alongside the agent one) — only when active. |
 | **Context window size** | Shows `1M` or `200k` only when not already in the model name. |

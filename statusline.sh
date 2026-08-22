@@ -99,7 +99,7 @@ elif [[ "$USE_NERDFONT" == "1" ]]; then
   S_WARN=" 󰀦"
   S_TIME=" "
   S_COST=$' '
-  S_DIRTY=$''
+  S_DIRTY=" "
   S_LIMIT="󰔟 "
   S_AGENT="⚙ "
   S_WORKTREE="  "
@@ -567,8 +567,16 @@ line1_wide="${line1}${rate_section}"
 parts=()
 if [[ -n "$git_branch" ]]; then
   dirty_display=""
-  if [[ -n "$dirty" ]]; then dirty_display="$S_DIRTY"; fi
-  parts+=("${GRAY}${S_BRANCH}${git_branch}${dirty_display}${RST}")
+  if [[ -n "$dirty" ]]; then dirty_display="${MAGENTA}${S_DIRTY% }${RST}"; fi
+  branch_color="$GRAY"
+  branch_warn=""
+  case "$git_branch" in
+    master | main | stable | trunk)
+      branch_color="$YELLOW"
+      branch_warn="${YELLOW} ${S_WARN# }${RST} "
+      ;;
+  esac
+  parts+=("${branch_color}${S_BRANCH}${git_branch}${RST}${dirty_display}${branch_warn}")
 fi
 if [[ -n "$lines_section" ]]; then
   parts+=("${lines_section}")
