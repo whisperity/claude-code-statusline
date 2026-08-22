@@ -18,9 +18,6 @@ set -euo pipefail
 # Environment detection
 # ═══════════════════════════════════════════════════════════════
 
-STATUSLINE_TMPDIR="${TMPDIR:-/tmp}"
-STATUSLINE_TMPDIR="${STATUSLINE_TMPDIR%/}"
-
 USE_ASCII="${CLAUDE_STATUSLINE_ASCII:-0}"
 USE_NERDFONT="${CLAUDE_STATUSLINE_NERDFONT:-0}"
 USE_POWERLINE="${CLAUDE_STATUSLINE_POWERLINE:-$USE_NERDFONT}"
@@ -28,6 +25,12 @@ USE_TRUECOLOR=0
 if [[ "${COLORTERM:-}" == "truecolor" || "${COLORTERM:-}" == "24bit" ]]; then
   USE_TRUECOLOR=1
 fi
+
+STATUSLINE_TMPDIR="${TMPDIR:-/tmp}"
+STATUSLINE_TMPDIR="${STATUSLINE_TMPDIR%/}"
+GIT_CACHE_MAX_AGE=5
+FIVE_HOUR_WINDOW_MIN=$(( 5 * 60 ))
+SEVEN_DAY_WINDOW_MIN=$(( 7 * 24 * 60 ))
 
 # ═══════════════════════════════════════════════════════════════
 # Colors and symbols
@@ -70,16 +73,24 @@ if [[ "$USE_ASCII" == "1" ]]; then
   S_BRANCH=">"
   S_WARN="!"
   S_PROMPT=">"
-  S_TIME=""
-  S_COST=""
+  S_TIME="@ "
+  S_COST=$'$ '
+  S_DIRTY="*"
+  S_LIMIT="# "
+  S_AGENT="@ "
+  S_WORKTREE=""
   SEP=" | "
 elif [[ "$USE_NERDFONT" == "1" ]]; then
-  S_BRAND="◆"
+  S_BRAND=$' '
   S_BRANCH=$' '
   S_WARN=" 󰀦"
   S_PROMPT="❯"
-  S_TIME="󰔟 "
+  S_TIME=" "
   S_COST=$' '
+  S_DIRTY=$''
+  S_LIMIT="󰔟 "
+  S_AGENT="⚙ "
+  S_WORKTREE="  "
   if [[ "$USE_POWERLINE" == "1" ]]; then
     SEP=$'  '
   else
@@ -90,7 +101,10 @@ else
   S_WARN=" ⚠"
   S_PROMPT="❯"
   S_TIME="⏲ "
-  S_COST="ƒ "
+  S_COST=$'$ '
+  S_DIRTY="Δ"
+  S_LIMIT="⟲ "
+  S_AGENT="⚙ "
   if [[ "$USE_POWERLINE" == "1" ]]; then
     # U+E0A0 is a Powerline glyph, so it is available whenever Powerline
     # separators are. It is monospace, so it occupies exactly one cell.
@@ -101,12 +115,13 @@ else
     # DejaVu Sans Mono), so fontconfig falls back to a proportional face.
     # Its East_Asian_Width is Neutral, so the terminal reserves a single
     # cell, but the proportional glyph is drawn wider than that and
-    # bleeds into the next cell -- which held the first letter of the
+    # bleeds into the next cell — which held the first letter of the
     # branch name, since this was the only tier without a trailing
     # space. The space absorbs the overflow.
     S_BRANCH="⎇ "
     SEP=" │ "
   fi
+  S_WORKTREE="$S_BRANCH"
 fi
 
 # ═══════════════════════════════════════════════════════════════
@@ -294,7 +309,7 @@ fi
 cost_val="${cost:-0}"
 cost_fmt=$(LC_ALL=C printf '%.2f' "$cost_val" 2>/dev/null || echo "0.00")
 to_int "$cost_val" cost_int
-cost_str="\$${cost_fmt}"
+cost_str="${cost_fmt}"
 
 if (( cost_int >= 50 )); then cost_color="$RED"
 elif (( cost_int >= 10 )); then cost_color="$YELLOW"
@@ -321,10 +336,7 @@ fi
 # Git branch and dirty marker (cached)
 # ═══════════════════════════════════════════════════════════════
 
-GIT_CACHE_DIR="${STATUSLINE_TMPDIR}/claude-statusline-git-${UID:-0}"
-mkdir -p "$GIT_CACHE_DIR" 2>/dev/null || true
-GIT_CACHE="$GIT_CACHE_DIR/$(cksum <<< "${cwd_full:-.}" | cut -d' ' -f1)"
-GIT_CACHE_MAX_AGE=5
+GIT_CACHE="${STATUSLINE_TMPDIR}/claude-statusline-git-$(cksum <<< "${cwd_full:-.}" | cut -d' ' -f1)"
 
 git_branch="${branch:-}"
 dirty=""
@@ -388,9 +400,6 @@ fi
 # ═══════════════════════════════════════════════════════════════
 # Rate limits (shown conditionally, as remaining capacity)
 # ═══════════════════════════════════════════════════════════════
-
-FIVE_HOUR_WINDOW_MIN=$(( 5 * 60 ))
-SEVEN_DAY_WINDOW_MIN=$(( 7 * 24 * 60 ))
 
 reset_minutes() {
   local resets_at="$1" now="$2"
@@ -480,6 +489,7 @@ to_int "${rate7d:--1}" rate7d_int
 now_epoch=$(date +%s)
 
 rate_parts=""
+rate_limit_icon="${GRAY}${DIM}${S_LIMIT}${RST}"
 if (( rate5h_int >= 0 )); then
   remaining5h=$(( 100 - rate5h_int ))
   if (( remaining5h < 0 )); then remaining5h=0; fi
@@ -495,7 +505,7 @@ if (( rate5h_int >= 0 )); then
     label_color5h="$GRAY"
   fi
   warn5h=$(rate_warn "$remaining5h")
-  rate_parts+="${label_color5h}${label5h}:${RST} ${bar5h} ${color5h}${remaining5h}%${RST}${warn5h}"
+  rate_parts+="${rate_limit_icon}${label_color5h}${label5h}:${RST} ${bar5h} ${color5h}${remaining5h}%${RST}${warn5h}"
 fi
 if (( rate7d_int >= 0 )); then
   remaining7d=$(( 100 - rate7d_int ))
@@ -512,8 +522,8 @@ if (( rate7d_int >= 0 )); then
     label_color7d="$GRAY"
   fi
   warn7d=$(rate_warn "$remaining7d")
-  if [[ -n "$rate_parts" ]]; then rate_parts+=" "; fi
-  rate_parts+="${label_color7d}${label7d}:${RST} ${bar7d} ${color7d}${remaining7d}%${RST}${warn7d}"
+  if [[ -n "$rate_parts" ]]; then rate_parts+="$SEP"; fi
+  rate_parts+="${rate_limit_icon}${label_color7d}${label7d}:${RST} ${bar7d} ${color7d}${remaining7d}%${RST}${warn7d}"
 fi
 if [[ -n "$rate_parts" ]]; then
   rate_section="${SEP}${rate_parts}"
@@ -543,7 +553,9 @@ line1+="${rate_section}"
 
 parts=()
 if [[ -n "$git_branch" ]]; then
-  parts+=("${GRAY}${S_BRANCH}${git_branch}${dirty}${RST}")
+  dirty_display=""
+  if [[ -n "$dirty" ]]; then dirty_display="$S_DIRTY"; fi
+  parts+=("${GRAY}${S_BRANCH}${git_branch}${dirty_display}${RST}")
 fi
 if [[ -n "$lines_section" ]]; then
   parts+=("${lines_section}")
@@ -552,9 +564,9 @@ parts+=("${BLUE}${dir}${RST}")
 
 # Agent / worktree indicator (only shown for non-main sessions)
 if [[ -n "${wt_name:-}" ]]; then
-  parts+=("${YELLOW}⚙ worktree:${wt_name}${RST}")
+  parts+=("${YELLOW}${S_AGENT}${S_WORKTREE}${wt_name}${RST}")
 elif [[ -n "${agent_name:-}" ]]; then
-  parts+=("${YELLOW}⚙ ${agent_name}${RST}")
+  parts+=("${YELLOW}${S_AGENT}${agent_name}${RST}")
 fi
 
 line2=""
