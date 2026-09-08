@@ -53,27 +53,32 @@ SEVEN_DAY_GREEN_FLOOR_MIN=$(( 2 * 60 ))
 # Colors and symbols
 # ═══════════════════════════════════════════════════════════════
 
-RST='\033[0m'
-BLACK='\033[30m'
-CYAN='\033[36m'
-BLUE='\033[34m'
-GRAY='\033[90m'
-DIM='\033[2m'
-YELLOW='\033[33m'
-GREEN='\033[32m'
-RED='\033[31m'
-MAGENTA='\033[35m'
+# Real ESC bytes via ANSI-C quoting, not the literal text "\033" -- these are
+# rendered with printf '%s', not '%b', so a value that merely *contains* the
+# ASCII text "\033[...m" (e.g., a maliciously named cwd) can't forge a colour
+# code. See sanitise() below for the other half of that defense.
+CSI=$'\033['
+RST="${CSI}0m"
+BLACK="${CSI}30m"
+CYAN="${CSI}36m"
+BLUE="${CSI}34m"
+GRAY="${CSI}90m"
+DIM="${CSI}2m"
+YELLOW="${CSI}33m"
+GREEN="${CSI}32m"
+RED="${CSI}31m"
+MAGENTA="${CSI}35m"
 
 # Anthropic brand purple (#7266EA)
 if (( USE_TRUECOLOR )); then
-  PURPLE='\033[38;2;114;102;234m'
+  PURPLE="${CSI}38;2;114;102;234m"
 else
-  PURPLE='\033[35m'
+  PURPLE="${CSI}35m"
 fi
 
 if (( USE_TRUECOLOR )); then
-  CTX_CACHE_ZONE_COLOR='\033[38;2;80;80;80m'
-  EMPTY_ZONE_COLOR='\033[38;2;60;60;60m'
+  CTX_CACHE_ZONE_COLOR="${CSI}38;2;80;80;80m"
+  EMPTY_ZONE_COLOR="${CSI}38;2;60;60;60m"
 else
   CTX_CACHE_ZONE_COLOR="$BLACK"
   EMPTY_ZONE_COLOR="$GRAY"
@@ -143,7 +148,7 @@ fi
 # ═══════════════════════════════════════════════════════════════
 
 fallback_prompt() {
-  printf '%b' "${RED}${1:-─}${RST}"
+  printf '%s' "${RED}${1:-─}${RST}"
   exit 0
 }
 
@@ -181,6 +186,16 @@ to_int() { # $1=raw value  $2=target variable name
   fi
   [[ "$v" =~ ^-?[0-9]+$ ]] || v=0
   printf -v "$2" '%s' "$v"
+}
+
+# Strip C0 control characters and DEL from a value that reaches the
+# terminal. A directory name may legally contain a raw ESC, which would
+# otherwise be emitted verbatim and run as a terminal control sequence.
+# The range stops at \x7f on purpose: 0x80-0x9f are UTF-8 continuation
+# bytes, not C1 controls, and stripping them would corrupt non-ASCII names.
+sanitise() { # $1=target variable name, holding the value to clean in place
+  local v="${!1}"
+  printf -v "$1" '%s' "${v//[$'\x01'-$'\x1f'$'\x7f']/}"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -232,6 +247,14 @@ parsed=$(echo "$input" | jq -r '
   IFS= read -r usage_populated
   IFS= read -r _sentinel
 } <<< "$parsed"
+
+# Every field below is attacker-controllable (a directory name, a branch, a
+# subagent name, ...) and ends up in the final output, so strip C0 controls
+# from each before it's used for anything -- comparisons, cache keys, or
+# display -- rather than trying to catch every render site individually.
+for _f in model_name dir branch agent_name cwd_full wt_name; do
+  sanitise "$_f"
+done
 
 # ═══════════════════════════════════════════════════════════════
 # Model
@@ -354,7 +377,7 @@ elif (( USE_TRUECOLOR )); then
       bar+="${CTX_CACHE_ZONE_COLOR}█"
     elif (( i < bar_filled )); then
       # Chat zone: original gradient color
-      bar+="\\033[38;2;${GRAD_R[$i]};${GRAD_G[$i]};${GRAD_B[$i]}m█"
+      bar+="${CSI}38;2;${GRAD_R[$i]};${GRAD_G[$i]};${GRAD_B[$i]}m█"
     else
       # Empty zone: dark gray hollow
       bar+="${EMPTY_ZONE_COLOR}░"
@@ -525,6 +548,7 @@ if [[ -n "${cwd_full:-}" && -d "${cwd_full:-}" ]]; then
 
   if [[ -f "$GIT_CACHE" ]]; then
     IFS='|' read -r cached_br cached_dt < "$GIT_CACHE" || true
+    sanitise cached_br
     if [[ -z "$git_branch" ]]; then git_branch="${cached_br}"; fi
     dirty="${cached_dt}"
   fi
@@ -630,7 +654,7 @@ time_left_color() {
   fi
   if (( floor_min <= green_floor_min )); then
     if (( USE_TRUECOLOR )); then
-      printf '%s\n' "\\033[38;2;${GRAD_R[0]};${GRAD_G[0]};${GRAD_B[0]}m"
+      printf '%s\n' "${CSI}38;2;${GRAD_R[0]};${GRAD_G[0]};${GRAD_B[0]}m"
     else
       echo "$GREEN"
     fi
@@ -640,7 +664,7 @@ time_left_color() {
   if (( USE_TRUECOLOR )); then
     local gi=$(( 1 + (floor_min - green_floor_min) * 8 / span ))
     if (( gi > 9 )); then gi=9; fi
-    printf '%s\n' "\\033[38;2;${GRAD_R[$gi]};${GRAD_G[$gi]};${GRAD_B[$gi]}m"
+    printf '%s\n' "${CSI}38;2;${GRAD_R[$gi]};${GRAD_G[$gi]};${GRAD_B[$gi]}m"
   else
     local frac_pct=$(( (floor_min - green_floor_min) * 100 / span ))
     if (( frac_pct > 66 )); then echo "$RED"
@@ -676,7 +700,7 @@ draw_remaining_bar() {
     for (( i=0; i<10; i++ )); do
       if (( i < filled )); then
         local gi=$(( 9 - i ))
-        b+="\\033[38;2;${GRAD_R[$gi]};${GRAD_G[$gi]};${GRAD_B[$gi]}m█"
+        b+="${CSI}38;2;${GRAD_R[$gi]};${GRAD_G[$gi]};${GRAD_B[$gi]}m█"
       else
         b+="${EMPTY_ZONE_COLOR}░"
       fi
@@ -743,14 +767,16 @@ fi
 # Assemble the output lines
 # ═══════════════════════════════════════════════════════════════
 
-# Character count of a line with its (still-literal, pre-%b) ANSI color
-# codes stripped, i.e. how many terminal columns it actually occupies.
-# Approximate: doesn't account for double-width glyphs (CJK, some
-# emoji), so a line right at the edge of the terminal width may still
-# wrap by a cell or two.
+# Character count of a line with its ANSI color codes (real ESC bytes, not
+# the literal text "\033") stripped, i.e. how many terminal columns it
+# actually occupies. Approximate: doesn't account for double-width glyphs
+# (CJK, some emoji), so a line right at the edge of the terminal width may
+# still wrap by a cell or two.
 visible_len() {
   local stripped
-  stripped=$(printf '%s' "$1" | sed -E 's/\\033\[[0-9;]*m//g')
+  # ${CSI} is ESC followed by a literal '[', which is a regex metachar --
+  # keep it escaped in the pattern so it isn't read as a bracket expression.
+  stripped=$(printf '%s' "$1" | sed -E "s/${CSI:0:1}\\[[0-9;]*m//g")
   printf '%s' "${#stripped}"
 }
 
@@ -807,11 +833,11 @@ combined_len=$(( $(visible_len "$line1_wide") + $(visible_len "$SEP") + $(visibl
 # ═══════════════════════════════════════════════════════════════
 
 if (( term_cols > 0 && combined_len <= term_cols )); then
-  printf '%b' "${line1_wide}${SEP}${line2}"
+  printf '%s' "${line1_wide}${SEP}${line2}"
 else
   line2_narrow="$line2"
   if [[ -n "$rate_parts" ]]; then
     line2_narrow="${rate_parts}${SEP}${line2}"
   fi
-  printf '%b\n%b' "$line1" "$line2_narrow"
+  printf '%s\n%s' "$line1" "$line2_narrow"
 fi

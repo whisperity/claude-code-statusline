@@ -45,8 +45,9 @@ Turn the blank status bar into a real-time dashboard: model, context usage with 
 | **Adaptive line count** | Collapses onto a single line when the terminal is wide enough to fit everything, otherwise wraps to two, moving rate limits to the front of line 2 on narrow terminals so it doesn't flow off screen. |
 | **Nerd Font support** | Optional: `` (time), `` (cost), `` (dirty marker) icons. Set `CLAUDE_STATUSLINE_NERDFONT=1`. |
 | **Powerline separators** | Optional: `` arrows and a `` branch glyph. Set `CLAUDE_STATUSLINE_POWERLINE=1`. |
-| **< 50ms** | Single `jq` call + cached git. No perceptible lag. |
 | **Crash-proof** | A global `ERR` trap and numeric-coercion on every JSON value flowing into arithmetic mean an unexpected failure falls back to a visible `─` instead of Claude Code rendering no status line at all. |
+| **Injection-safe** | Untrusted fields (directory name, branch, agent/worktree name) are stripped of control characters and never escape-interpreted, so a maliciously named directory can't forge terminal control sequences. See [Security](#security). |
+| **< 50ms** | Single `jq` call + cached git. No perceptible lag. |
 
 ## Installation
 
@@ -79,8 +80,7 @@ Add this to your `settings.json`:
 {
   "statusLine": {
     "type": "command",
-    "command": "~/.claude/statusline.sh",
-    "timeout": 10
+    "command": "~/.claude/statusline.sh"
   }
 }
 ```
@@ -114,7 +114,7 @@ This script:
 1. **Single `jq` call** (~3ms) — parses all 17 fields at once
 2. **Git cache** (~0ms on cache hit, ~40ms on refresh) — dirty check cached for 5 seconds, keyed by a checksum of the working directory so concurrent sessions in different repos don't clobber each other's snapshot
 3. **Smart assembly** — only non-zero sections are rendered
-4. **`printf '%b'`** — interprets ANSI escape codes for the final colored output
+4. **`printf '%s'`** — colours are real ESC bytes already, so the final output is never escape-interpreted (see [Security](#security) below)
 
 Total: **< 50ms** end-to-end.
 
@@ -148,6 +148,30 @@ chmod +x tests/mock.sh
 ./tests/mock.sh primary  # Primary-branch warning (master/main/stable/trunk)
 ./tests/mock.sh ascii    # ASCII fallback
 ```
+
+## Security
+
+`statusline.sh` renders several values Claude Code reports about your session
+verbatim — most notably the working-directory basename, but also the git
+branch, agent name, and worktree name. Since these can come from
+attacker-influenced input (an extracted archive, a cloned repo's subdirectory
+or branch), two independent defences keep a hostile value from driving your
+terminal:
+
+1. **No escape-interpreted output.** Colours are stored as real ESC bytes
+   (`$'\033[...'`, ANSI-C quoting) instead of the literal text `\033[...m`,
+   and the script writes its output with `printf '%s'` rather than `%b`.
+   `%b` re-interprets backslash escapes in its *argument*, so a directory
+   merely named e.g. `proj\e]0;PWNED\a` — plain ASCII, no control bytes at
+   all — would otherwise become a live terminal OSC sequence.
+2. **`sanitize()`** strips C0 control characters and DEL from every
+   attacker-influenced field before it's used for anything, closing the
+   independent vector where a directory name legally contains a raw ESC
+   byte on Linux. The strip range stops at `\x7f` on purpose: `0x80`–`0x9f`
+   are UTF-8 continuation bytes, not C1 controls, and removing them would
+   corrupt non-ASCII names.
+
+Found and fixed upstream in [kcchien/claude-code-statusline#10](https://github.com/kcchien/claude-code-statusline/pull/10).
 
 ## Bash 3.2 compatibility
 
