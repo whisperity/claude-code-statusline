@@ -1,7 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="540" height="68" viewBox="0 0 540 68">
-  <rect width="540" height="68" rx="8" fill="#1a1b26"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="597" height="54" viewBox="0 0 597 54">
+  <rect width="597" height="54" rx="8" fill="#1a1b26"/>
   <text font-family="'JetBrains Mono','Fira Code','SF Mono',Menlo,Consolas,monospace" font-size="13">
-    <tspan x="16" y="28" fill="#7266EA">◆</tspan><tspan fill="#5BC0DE"> Opus 4.6 (1M context)</tspan><tspan fill="#555"> │ </tspan><tspan fill="#3C3C3C">░░░░░░░░░░</tspan><tspan fill="#2ECC71"> 0%</tspan><tspan fill="#555"> │ </tspan><tspan fill="#888">$0.00</tspan>
-    <tspan x="16" y="52" fill="#3498DB">claude-temp</tspan>
+    <tspan x="16" y="30" fill="#7266ea">◆</tspan><tspan fill="#cccccc"> </tspan><tspan fill="#5BC0DE">Opus 4.6 (1M context)</tspan><tspan fill="#cccccc"> │ </tspan><tspan fill="#5BC0DE">15:57:35</tspan><tspan fill="#cccccc"> │ </tspan><tspan fill="#3c3c3c">░</tspan><tspan fill="#3c3c3c">░</tspan><tspan fill="#3c3c3c">░</tspan><tspan fill="#3c3c3c">░</tspan><tspan fill="#3c3c3c">░</tspan><tspan fill="#3c3c3c">░</tspan><tspan fill="#3c3c3c">░</tspan><tspan fill="#3c3c3c">░</tspan><tspan fill="#3c3c3c">░</tspan><tspan fill="#3c3c3c">░</tspan><tspan fill="#cccccc"> </tspan><tspan fill="#2ECC71">0%</tspan><tspan fill="#cccccc"> │ </tspan><tspan fill="#888888">$ 0.00</tspan><tspan fill="#cccccc"> │ </tspan><tspan fill="#3498DB">my-project</tspan>
   </text>
 </svg>

@@ -2,9 +2,9 @@
 # install.sh — One-line installer for claude-code-statusline
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/kcchien/claude-code-statusline/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/whisperity/claude-code-statusline/master/install.sh | bash
 #   — or —
-#   git clone https://github.com/kcchien/claude-code-statusline.git && cd claude-code-statusline && ./install.sh
+#   git clone https://github.com/whisperity/claude-code-statusline.git && cd claude-code-statusline && ./install.sh
 
 set -euo pipefail
 
@@ -27,7 +27,7 @@ if [[ -f "$SCRIPT_DIR/statusline.sh" ]]; then
   cp "$SCRIPT_DIR/statusline.sh" "$TARGET"
 else
   echo "Downloading statusline.sh..."
-  curl -fsSL "https://raw.githubusercontent.com/kcchien/claude-code-statusline/main/statusline.sh" -o "$TARGET"
+  curl -fsSL "https://raw.githubusercontent.com/whisperity/claude-code-statusline/master/statusline.sh" -o "$TARGET"
 fi
 chmod +x "$TARGET"
 echo "✓ Installed to $TARGET"
@@ -42,7 +42,6 @@ if [[ -f "$SETTINGS" ]]; then
     echo '  "statusLine": {'
     echo '    "type": "command",'
     echo '    "command": "~/.claude/statusline.sh",'
-    echo '    "timeout": 10'
     echo '  }'
     echo ""
   else
@@ -52,7 +51,6 @@ if [[ -f "$SETTINGS" ]]; then
     echo '  "statusLine": {'
     echo '    "type": "command",'
     echo '    "command": "~/.claude/statusline.sh",'
-    echo '    "timeout": 10'
     echo '  }'
     echo ""
   fi
@@ -64,7 +62,6 @@ else
   echo '  "statusLine": {'
   echo '    "type": "command",'
   echo '    "command": "~/.claude/statusline.sh",'
-  echo '    "timeout": 10'
   echo '  }'
   echo '}'
   echo ""

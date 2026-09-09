@@ -10,15 +10,15 @@ Turn the blank status bar into a real-time dashboard: model, context usage with 
 
 ## Preview
 
-**Normal** — Context at 42%, everything is fine
+**Normal** — Context at 42%, boot cost dimmed grey, plenty of rate-limit capacity left
 
 ![Normal](docs/images/normal.svg)
 
-**Warning** — Context at 75%, pay attention
+**Warning** — Context at 75%, boot cost yellow, rate limit at 48% remaining
 
 ![Warning](docs/images/warning.svg)
 
-**Danger** — Context at 92%, almost full
+**Danger** — Context at 92%, on `main` with uncommitted changes (yellow branch + magenta dirty marker), rate limit critical
 
 ![Danger](docs/images/danger.svg)
 
@@ -43,8 +43,8 @@ Turn the blank status bar into a real-time dashboard: model, context usage with 
 | **Brand identity** | `◆` diamond in Anthropic purple (#7266EA). |
 | **3-tier rendering** | True color → ANSI → ASCII. Works in any terminal. |
 | **Adaptive line count** | Collapses onto a single line when the terminal is wide enough to fit everything, otherwise wraps to two, moving rate limits to the front of line 2 on narrow terminals so it doesn't flow off screen. |
-| **Nerd Font support** | Optional: ``, `󰔟`, `` icons. Set `CLAUDE_STATUSLINE_NERDFONT=1`. |
-| **Powerline separators** | Optional: `` arrows. Set `CLAUDE_STATUSLINE_POWERLINE=1`. |
+| **Nerd Font support** | Optional: `` (time), `` (cost), `` (dirty marker) icons. Set `CLAUDE_STATUSLINE_NERDFONT=1`. |
+| **Powerline separators** | Optional: `` arrows and a `` branch glyph. Set `CLAUDE_STATUSLINE_POWERLINE=1`. |
 | **< 50ms** | Single `jq` call + cached git. No perceptible lag. |
 | **Crash-proof** | A global `ERR` trap and numeric-coercion on every JSON value flowing into arithmetic mean an unexpected failure falls back to a visible `─` instead of Claude Code rendering no status line at all. |
 
@@ -58,7 +58,7 @@ Turn the blank status bar into a real-time dashboard: model, context usage with 
 ### Quick install
 
 ```bash
-git clone https://github.com/kcchien/claude-code-statusline.git
+git clone https://github.com/whisperity/claude-code-statusline.git
 cd claude-code-statusline
 ./install.sh
 ```
@@ -140,11 +140,13 @@ The status line receives [these JSON fields](https://code.claude.com/docs/en/sta
 Run the test script to see all display modes:
 
 ```bash
-chmod +x examples/test-mock.sh
-./examples/test-mock.sh          # All scenarios
-./examples/test-mock.sh normal   # Just normal state
-./examples/test-mock.sh danger   # Just danger state
-./examples/test-mock.sh ascii    # ASCII fallback
+chmod +x tests/mock.sh
+./tests/mock.sh          # All scenarios
+./tests/mock.sh normal   # Just normal state
+./tests/mock.sh danger   # Just danger state
+./tests/mock.sh boot     # Boot cost indicator (primes the cache, then shows the split bar)
+./tests/mock.sh primary  # Primary-branch warning (master/main/stable/trunk)
+./tests/mock.sh ascii    # ASCII fallback
 ```
 
 ## Bash 3.2 compatibility
