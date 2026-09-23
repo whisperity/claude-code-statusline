@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/cover.jpeg" alt="claude-code-statusline" width="100%">
+  <img src="docs/images/cover.png" alt="claude-code-statusline" width="100%">
 </p>
 
 # ◆ claude-code-statusline
