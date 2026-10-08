@@ -159,9 +159,33 @@ fallback_prompt() {
   exit 0
 }
 
-# An unexpected failure must never leave the status line blank, because
-# empty output makes Claude Code render nothing at all.
-trap 'fallback_prompt "─ statusline failed on line $LINENO —"' ERR
+# Claude Code discards stderr, so keep it in a per-process file to quote Bash's
+# own complaint (e.g., "line 42: x: unbound variable") in the marker.
+ERR_LOG="${STATUSLINE_TMPDIR}/claude-statusline-err-$$"
+if ( : > "$ERR_LOG" ) 2>/dev/null; then exec 2> "$ERR_LOG"; else ERR_LOG=/dev/null; fi
+
+# Last stderr line without the "<script>: " prefix, safe to print: it can echo
+# untrusted values (paths, JSON fields), so strip C0 controls.
+last_error() {
+  local msg
+  msg=$(tail -n 1 "$ERR_LOG" 2>/dev/null) || msg=""
+  if [[ "$msg" == *": line "* ]]; then msg="line ${msg#*: line }"; fi
+  printf '%s' "${msg:0:100}" | LC_ALL=C tr -d '\000-\037\177'
+}
+
+# Most errors (a failing command) reach the ERR trap; fatal ones (e.g. an
+# unbound variable under `set -u`) bypass it and are caught on EXIT instead.
+trap 'msg=$(last_error); fallback_prompt "─ statusline failed on line $LINENO: ${msg:-$BASH_COMMAND} —"' ERR
+on_exit() {
+  local rc=$? msg
+  if (( rc != 0 )); then msg=$(last_error); fi
+  [[ "$ERR_LOG" == /dev/null ]] || rm -f "$ERR_LOG"
+  if (( rc != 0 )); then
+    printf '%s' "${RED}─ statusline failed: ${msg:-exit $rc} —${RST}"
+    exit 0
+  fi
+}
+trap on_exit EXIT
 
 command -v jq &>/dev/null || fallback_prompt "─ │ jq not found"
 
@@ -169,6 +193,8 @@ command -v jq &>/dev/null || fallback_prompt "─ │ jq not found"
 # Utility functions
 # ═══════════════════════════════════════════════════════════════
 
+# Safe and both Darwin (BSD) and Linux (GNU) compatible modification time of
+# a file.
 file_mtime() {
   local file="$1" mtime=""
   if mtime=$(stat -c %Y "$file" 2>/dev/null) && [[ "$mtime" =~ ^[0-9]+$ ]]; then
@@ -365,13 +391,18 @@ fi
 # Context progress bar (cache zone + chat zone)
 # ═══════════════════════════════════════════════════════════════
 
-ctx_cache_filled=$(( ctx_cache_pct / 10 ))
-if (( ctx_cache_filled > 10 )); then ctx_cache_filled=10; fi
-if (( ctx_cache_pct > 0 && ctx_cache_filled == 0 )); then ctx_cache_filled=1; fi
-
+# A lit cell means a whole 10% consumed, so there is no minimum of one cell.
+# The boot zone is the boot percentage rounded to the nearest 10% (ties up),
+# except that a rounded-up (shared) cell goes to the chat once chat usage has
+# closed out that 10% interval.
 bar_filled=$(( pct_int / 10 ))
 if (( bar_filled > 10 )); then bar_filled=10; fi
-if (( pct_int > 0 && bar_filled == 0 )); then bar_filled=1; fi
+
+ctx_cache_filled=$(( ctx_cache_pct / 10 ))
+if (( ctx_cache_pct % 10 >= 5 && ctx_cache_filled >= bar_filled )); then
+  ctx_cache_filled=$(( ctx_cache_filled + 1 ))
+fi
+if (( ctx_cache_filled > 10 )); then ctx_cache_filled=10; fi
 
 # Bar has three zones: cache (dark, solid) → chat (gradient) → empty (dim)
 bar=""
