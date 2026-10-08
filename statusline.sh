@@ -89,6 +89,13 @@ GRAD_R=(46 116 186 241 239 236 233 231 211 192)
 GRAD_G=(204 195 186 196 161 126 101 76 66 57)
 GRAD_B=(113 89 64 15 24 34 44 60 50 43)
 
+# No ANSI orange: take the gradient's orange stop, or bright red without truecolor.
+if (( USE_TRUECOLOR )); then
+  ORANGE="${CSI}38;2;${GRAD_R[5]};${GRAD_G[5]};${GRAD_B[5]}m"
+else
+  ORANGE="${CSI}91m"
+fi
+
 # Symbol sets
 if [[ "$USE_ASCII" == "1" ]]; then
   S_BRAND="<>"
@@ -206,45 +213,47 @@ input=$(cat)
 
 parsed=$(echo "$input" | jq -r '
   (.model.display_name // ""),
+  (.output_style.name // ""),
   (.session_id // ""),
   (.context_window.used_percentage // 0 | tostring),
+  (if .context_window.current_usage == null then "0" else "1" end),
+  (.context_window.context_window_size // 0 | tostring),
   (.cost.total_cost_usd // 0 | (. * 100 | round) / 100 | tostring),
-  (.workspace.current_dir // "." | split("/") | last),
-  (.worktree.branch // ""),
-  (.rate_limits.five_hour.used_percentage // -1 | tostring),
-  (.rate_limits.seven_day.used_percentage // -1 | tostring),
-  (.rate_limits.five_hour.resets_at // -1 | tostring),
-  (.rate_limits.seven_day.resets_at // -1 | tostring),
-  (.agent.name // ""),
+  (.cost.total_duration_ms // 0 | tostring),
   (.workspace.current_dir // "."),
+  (.worktree.branch // ""),
   (.cost.total_lines_added // 0 | tostring),
   (.cost.total_lines_removed // 0 | tostring),
-  (.cost.total_duration_ms // 0 | tostring),
-  (.context_window.context_window_size // 0 | tostring),
+  (.rate_limits.five_hour.used_percentage // -1 | tostring),
+  (.rate_limits.five_hour.resets_at // -1 | tostring),
+  (.rate_limits.seven_day.used_percentage // -1 | tostring),
+  (.rate_limits.seven_day.resets_at // -1 | tostring),
+  (.workspace.current_dir // "." | split("/") | last),
   (.worktree.name // ""),
-  (if .context_window.current_usage == null then "0" else "1" end),
+  (.agent.name // ""),
   "END"
 ' 2>/dev/null) || fallback_prompt "─ │ parse error"
 
 {
   IFS= read -r model_name
+  IFS= read -r style_name
   IFS= read -r session_id
   IFS= read -r ctx_pct
+  IFS= read -r usage_populated
+  IFS= read -r ctx_size
   IFS= read -r cost
-  IFS= read -r dir
-  IFS= read -r branch
-  IFS= read -r rate5h
-  IFS= read -r rate7d
-  IFS= read -r reset5h
-  IFS= read -r reset7d
-  IFS= read -r agent_name
+  IFS= read -r duration_ms
   IFS= read -r cwd_full
+  IFS= read -r branch
   IFS= read -r lines_add
   IFS= read -r lines_rm
-  IFS= read -r duration_ms
-  IFS= read -r ctx_size
+  IFS= read -r rate5h
+  IFS= read -r reset5h
+  IFS= read -r rate7d
+  IFS= read -r reset7d
+  IFS= read -r dir
   IFS= read -r wt_name
-  IFS= read -r usage_populated
+  IFS= read -r agent_name
   IFS= read -r _sentinel
 } <<< "$parsed"
 
@@ -252,7 +261,7 @@ parsed=$(echo "$input" | jq -r '
 # subagent name, ...) and ends up in the final output, so strip C0 controls
 # from each before it's used for anything -- comparisons, cache keys, or
 # display -- rather than trying to catch every render site individually.
-for _f in model_name dir branch agent_name cwd_full wt_name; do
+for _f in model_name style_name cwd_full branch dir wt_name agent_name; do
   sanitise "$_f"
 done
 
@@ -261,6 +270,8 @@ done
 # ═══════════════════════════════════════════════════════════════
 
 model="${model_name:-─}"
+style_label=""
+if [[ -n "$style_name" && "$style_name" != "default" ]]; then style_label=" ${style_name}"; fi
 
 # ═══════════════════════════════════════════════════════════════
 # Context cache snapshot
@@ -398,17 +409,23 @@ else
 fi
 
 # Cache label: pre-chat context percentage shown to the left of the
-# bar, omitted when it rounds to 0%.
+# bar, omitted below 10%.
 ctx_cache_label=""
-if (( ctx_cache_pct > 0 )); then
-  if (( ctx_cache_pct > 10 )); then ctx_cache_color="$RED"
-  elif (( ctx_cache_pct > 5 )); then ctx_cache_color="$YELLOW"
+if (( ctx_cache_pct >= 10 )); then
+  if (( ctx_cache_pct >= 25 )); then ctx_cache_color="$RED"
+  elif (( ctx_cache_pct >= 20 )); then ctx_cache_color="$ORANGE"
+  elif (( ctx_cache_pct >= 15 )); then ctx_cache_color="$YELLOW"
   else ctx_cache_color="$GRAY"; fi
   ctx_cache_label="${ctx_cache_color}${ctx_cache_pct}%${RST} "
 fi
 
 # Percentage text color (matches the bar's overall color)
-if (( pct_int >= 90 )); then pct_color="$RED"
+# Truecolor: the text takes the colour of the bar's last filled cell, so the two
+# always agree. ANSI: same 70/90 thresholds as the bar.
+if (( USE_TRUECOLOR )); then
+  gi=$(( bar_filled > 0 ? bar_filled - 1 : 0 ))
+  pct_color="${CSI}38;2;${GRAD_R[$gi]};${GRAD_G[$gi]};${GRAD_B[$gi]}m"
+elif (( pct_int >= 90 )); then pct_color="$RED"
 elif (( pct_int >= 70 )); then pct_color="$YELLOW"
 else pct_color="$GREEN"; fi
 
@@ -784,7 +801,7 @@ now=$(date +%H:%M:%S)
 term_cols="${COLUMNS:-0}"
 to_int "$term_cols" term_cols
 
-line1="${PURPLE}${S_BRAND}${RST} ${CYAN}${model}${RST}"
+line1="${PURPLE}${S_BRAND}${RST} ${CYAN}${model}${RST}${style_label}"
 line1+="${SEP}${CYAN}${now}${RST}"
 line1+="${SEP}${ctx_cache_label}${bar} ${pct_color}${pct_int}%${RST}${ctx_warn}${ctx_label}"
 line1+="${SEP}${cost_color}${S_COST}${cost_str}${RST}"

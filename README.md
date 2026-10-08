@@ -18,7 +18,7 @@ Turn the blank status bar into a real-time dashboard: model, context usage with 
 
 ![Warning](docs/images/warning.svg)
 
-**Danger** — Context at 92%, on `main` with uncommitted changes (yellow branch + magenta dirty marker), rate limit critical
+**Danger** — Context at 92%, boot cost red, on `main` with uncommitted changes (yellow branch + magenta dirty marker), rate limit critical
 
 ![Danger](docs/images/danger.svg)
 
@@ -30,8 +30,8 @@ Turn the blank status bar into a real-time dashboard: model, context usage with 
 
 | Feature | Description |
 |---------|-------------|
-| **Gradient progress bar** | True-color (24-bit) gradient from green → yellow → red. Falls back to ANSI 256 colors or ASCII automatically. |
-| **Boot cost indicator** | Splits the bar into a dark-grey "boot" zone (context already spent on `CLAUDE.md`, rules, memory, skills before you typed anything) and the gradient "chat" zone, with a percentage label to the bar's left, colored by severity (hidden below 1%, grey 1–5%, yellow 6–10%, red 11%+). |
+| **Gradient progress bar** | True-color (24-bit) gradient from green → yellow → red. The percentage takes the colour of the bar's last cell. Falls back to ANSI 256 colors or ASCII automatically. |
+| **Boot cost indicator** | Splits the bar into a dark-grey "boot" zone (context already spent on `CLAUDE.md`, rules, memory, skills before you typed anything) and the gradient "chat" zone, with a percentage label to the bar's left, colored by severity (hidden below 10%, grey 10–14%, yellow 15–19%, orange 20–24%, red 25%+). |
 | **`/compact` detection** | Two independent signals — `context_window.current_usage` going `null` then repopulating, and context usage dropping below its session high-water mark — reset the boot-cost snapshot after a compaction instead of holding a stale pre-compaction percentage for the rest of the session. |
 | **Smart hiding** | Zero values (`+0/-0`, `0m0s`, rate limits) are hidden. `$0.00` stays but dims. |
 | **Dynamic cost coloring** | 4-tier gradient: grey below $1, green $1–10, yellow $10–50, red above $50. |
@@ -132,6 +132,7 @@ The status line receives [these JSON fields](https://code.claude.com/docs/en/sta
 - `rate_limits.five_hour/seven_day.used_percentage` — rate limits
 - `rate_limits.five_hour/seven_day.resets_at` — countdown to each window's reset
 - `worktree.branch/name` — git worktree info
+- `output_style.name` — shown after the model name, hidden when `default`
 - `agent.name` — subagent name
 - ...and more. See the [official docs](https://code.claude.com/docs/en/statusline).
 
@@ -145,6 +146,7 @@ chmod +x tests/mock.sh
 ./tests/mock.sh normal   # Just normal state
 ./tests/mock.sh danger   # Just danger state
 ./tests/mock.sh boot     # Boot cost indicator (primes the cache, then shows the split bar)
+./tests/mock.sh style    # Output style label after the model name
 ./tests/mock.sh primary  # Primary-branch warning (master/main/stable/trunk)
 ./tests/mock.sh ascii    # ASCII fallback
 ```
