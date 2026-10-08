@@ -36,7 +36,7 @@ Turn the blank status bar into a real-time dashboard: model, context usage with 
 | **Smart hiding** | Zero values (`+0/-0`, `0m0s`, rate limits) are hidden. `$0.00` stays but dims. |
 | **Dynamic cost colouring** | 4-tier gradient: grey below $1, green $1–10, yellow $10–50, red above $50. |
 | **Git branch + dirty** | Shows branch name with a dirty marker (`*` / `Δ` / *nf-oct-file_diff*) for uncommitted changes. On `master`/`main`/`stable`/`trunk` the branch name turns yellow with a warning glyph, since working directly on one of these is usually a mistake worth noticing. Cached for 5 seconds to stay fast, keyed per working directory so concurrent sessions in different repos never clobber each other's snapshot. |
-| **Rate limits** | 5-hour and 7-day *remaining* capacity (Claude Pro/Max only), each with its own gradient bar and a mathematically-rounded countdown to reset (e.g. "45m", "3h") instead of a bare "5h"/"7d" label. Red with a warning glyph when ≤ 10% left. |
+| **Rate limits** | 5-hour and 7-day *remaining* capacity (Claude Pro/Max only), each with its own gradient bar and a mathematically-rounded countdown to reset (e.g. "45m", "3h") instead of a bare "5h"/"7d" label. Red with a warning glyph when ≤ 10% left. On Fable (Claude Max only) the 7-day part shows only the countdown, since Fable has a separate weekly quota the payload doesn't expose, unless the overall limit has 5% or less left. |
 | **Session duration** | Elapsed time compacts through days/weeks/months instead of capping at minutes+seconds, e.g. `1w3d 4h` or `1M2d 3h50m10s`. |
 | **Agent / Worktree indicator** | `⚙ code-reviewer` or `⚙⎇ worktree:my-feature` (a distinct worktree icon alongside the agent one) — only when active. |
 | **Context window size** | Shows `1M` or `200k` only when not already in the model name. |
@@ -123,6 +123,7 @@ Total: **< 50ms** end-to-end.
 The status line receives [these JSON fields](https://code.claude.com/docs/en/statusline#available-data):
 
 - `model.display_name` — current model
+- `model.id` — on Fable, the overall 7-day limit shows only its reset countdown and `?` (Fable has its own, unexposed weekly quota)
 - `session_id` — keys the boot-cost and git-branch caches so concurrent sessions don't clobber each other
 - `context_window.used_percentage` — context usage (0-100)
 - `context_window.current_usage` — `null` before the first API call and again right after `/compact`, used to detect compaction
@@ -147,6 +148,7 @@ chmod +x tests/mock.sh
 ./tests/mock.sh danger   # Just danger state
 ./tests/mock.sh boot     # Boot cost indicator (primes the cache, then shows the split bar)
 ./tests/mock.sh style    # Output style label after the model name
+./tests/mock.sh fable    # Fable: 7-day bar shows only `?` unless 5% or less remains
 ./tests/mock.sh primary  # Primary-branch warning (master/main/stable/trunk)
 ./tests/mock.sh ascii    # ASCII fallback
 ```

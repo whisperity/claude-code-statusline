@@ -254,6 +254,7 @@ parsed=$(echo "$input" | jq -r '
   (.rate_limits.five_hour.resets_at // -1 | tostring),
   (.rate_limits.seven_day.used_percentage // -1 | tostring),
   (.rate_limits.seven_day.resets_at // -1 | tostring),
+  (.model.id // ""),
   (.workspace.current_dir // "." | split("/") | last),
   (.worktree.name // ""),
   (.agent.name // ""),
@@ -277,6 +278,7 @@ parsed=$(echo "$input" | jq -r '
   IFS= read -r reset5h
   IFS= read -r rate7d
   IFS= read -r reset7d
+  IFS= read -r model_id
   IFS= read -r dir
   IFS= read -r wt_name
   IFS= read -r agent_name
@@ -789,6 +791,12 @@ if (( rate5h_int >= 0 )); then
   warn5h=$(rate_warn "$remaining5h")
   rate_parts+="${rate_limit_icon}${label_color5h}${label5h}:${RST} ${bar5h} ${color5h}${remaining5h}%${RST}${warn5h}"
 fi
+# Fable has its own weekly quota that the payload doesn't expose and that runs
+# out first, so the overall 7-day bar overstates what is left.
+# Show only the reset countdown and a "?", unless the overall limit itself is
+# nearly gone (5% remaining or less).
+unknown7d=0
+if [[ "$model_id" == *fable* ]] && (( 100 - rate7d_int > 5 )); then unknown7d=1; fi
 if (( rate7d_int >= 0 )); then
   remaining7d=$(( 100 - rate7d_int ))
   if (( remaining7d < 0 )); then remaining7d=0; fi
@@ -805,7 +813,11 @@ if (( rate7d_int >= 0 )); then
   fi
   warn7d=$(rate_warn "$remaining7d")
   if [[ -n "$rate_parts" ]]; then rate_parts+="$SEP"; fi
-  rate_parts+="${rate_limit_icon}${label_color7d}${label7d}:${RST} ${bar7d} ${color7d}${remaining7d}%${RST}${warn7d}"
+  if (( unknown7d )); then
+    rate_parts+="${rate_limit_icon}${label_color7d}${label7d}:${RST} ${GRAY}?${RST}"
+  else
+    rate_parts+="${rate_limit_icon}${label_color7d}${label7d}:${RST} ${bar7d} ${color7d}${remaining7d}%${RST}${warn7d}"
+  fi
 fi
 if [[ -n "$rate_parts" ]]; then
   rate_section="${SEP}${rate_parts}"

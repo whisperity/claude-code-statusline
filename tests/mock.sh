@@ -2,8 +2,8 @@
 # mock.sh — Test statusline.sh with mock JSON data
 #
 # Usage: ./tests/mock.sh [scenario]
-# Scenarios: normal, warning, danger, startup, agent, worktree, style, boot, primary,
-#            ascii, nerdfont
+# Scenarios: normal, warning, danger, startup, agent, worktree, style, fable,
+#            boot, primary, ascii, nerdfont
 
 set -euo pipefail
 
@@ -89,6 +89,11 @@ JSON_AGENT='{"model":{"display_name":"Claude Opus 4.6"},"session_id":"mock-agent
 # Output style: shown after the model name, hidden when it is "default".
 JSON_STYLE='{"model":{"display_name":"Claude Opus 4.6"},"session_id":"mock-style","output_style":{"name":"Testing"},"context_window":{"used_percentage":42,"current_usage":420000,"context_window_size":1000000},"cost":{"total_cost_usd":0.85,"total_duration_ms":222000},"workspace":{"current_dir":"/Users/dev/my-project"}}'
 
+# Fable has its own weekly quota, so the overall 7-day bar shows only "?" for it
+# (plus the reset countdown) unless the overall limit is nearly gone (5% remaining or less), as in the second.
+JSON_FABLE='{"model":{"id":"claude-fable-5-1","display_name":"Fable 5.1"},"session_id":"mock-fable","context_window":{"used_percentage":42,"current_usage":420000,"context_window_size":1000000},"cost":{"total_cost_usd":3.85,"total_duration_ms":222000},"workspace":{"current_dir":"/Users/dev/my-project"},"rate_limits":{"five_hour":{"used_percentage":15,"resets_at":'"$RESET_5H"'},"seven_day":{"used_percentage":8,"resets_at":'"$RESET_7D"'}}}'
+JSON_FABLE_LOW='{"model":{"id":"claude-fable-5-1","display_name":"Fable 5.1"},"session_id":"mock-fable-low","context_window":{"used_percentage":42,"current_usage":420000,"context_window_size":1000000},"cost":{"total_cost_usd":3.85,"total_duration_ms":222000},"workspace":{"current_dir":"/Users/dev/my-project"},"rate_limits":{"five_hour":{"used_percentage":15,"resets_at":'"$RESET_5H"'},"seven_day":{"used_percentage":95,"resets_at":'"$RESET_7D"'}}}'
+
 JSON_WORKTREE='{"model":{"display_name":"Claude Opus 4.6"},"session_id":"mock-worktree","context_window":{"used_percentage":42,"current_usage":420000,"context_window_size":1000000},"cost":{"total_cost_usd":0.85,"total_lines_added":150,"total_lines_removed":30,"total_duration_ms":222000},"workspace":{"current_dir":"/Users/dev/my-project"},"worktree":{"branch":"worktree-my-feature","name":"my-feature","path":"/path/to/worktree"}}'
 
 # Boot cost: the priming call reports a low percentage (startup config only),
@@ -110,6 +115,7 @@ case "${SCRIPT}" in
   startup)  run_test "Session startup (zero values hidden)" "$JSON_STARTUP" ;;
   agent)    run_test "Agent mode (code-reviewer)" "$JSON_AGENT" ;;
   worktree) run_test "Worktree mode (my-feature)" "$JSON_WORKTREE" ;;
+  fable)    run_test "Fable (7d shows ?)" "$JSON_FABLE"; run_test "Fable (7d shown, 5% left)" "$JSON_FABLE_LOW" ;;
   style)    run_test "Output style (Testing)" "$JSON_STYLE" ;;
   boot)     run_test_primed "Boot cost indicator (18% boot, 48% chat)" "$JSON_BOOT_PRIME" "$JSON_BOOT" ;;
   primary)  run_test "Primary branch warning (master)" "$JSON_PRIMARY" ;;
@@ -123,6 +129,8 @@ case "${SCRIPT}" in
     run_test "Agent mode (code-reviewer)" "$JSON_AGENT"
     run_test "Worktree mode (my-feature)" "$JSON_WORKTREE"
     run_test "Output style (Testing)" "$JSON_STYLE"
+    run_test "Fable (7d shows ?)" "$JSON_FABLE"
+    run_test "Fable (7d shown, 5% left)" "$JSON_FABLE_LOW"
     run_test_primed "Boot cost indicator (18% boot, 48% chat)" "$JSON_BOOT_PRIME" "$JSON_BOOT"
     run_test "Primary branch warning (master)" "$JSON_PRIMARY"
     run_test "ASCII fallback" "$JSON_NORMAL" "CLAUDE_STATUSLINE_ASCII=1"
@@ -130,7 +138,7 @@ case "${SCRIPT}" in
     ;;
   *)
     echo "Unknown scenario: $SCRIPT"
-    echo "Available: normal, warning, danger, startup, agent, worktree, style, boot, primary, ascii, nerdfont, all"
+    echo "Available: normal, warning, danger, startup, agent, worktree, style, fable, boot, primary, ascii, nerdfont, all"
     exit 1
     ;;
 esac
